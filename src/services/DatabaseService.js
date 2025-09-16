@@ -1,15 +1,19 @@
-// src/services/DatabaseService.js
+// src/services/DatabaseService.js - With migration support
 import * as SQLite from 'expo-sqlite';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 class DatabaseService {
   constructor() {
     this.db = null;
+    this.dbVersion = 2; // Increment this when you change schema
   }
 
   async initDatabase() {
     try {
       this.db = await SQLite.openDatabaseAsync('emega.db');
+      
+      // Check if we need to migrate/reset database
+      await this.handleDatabaseMigration();
       
       await this.createTables();
       console.log('Database initialized successfully');
@@ -19,99 +23,171 @@ class DatabaseService {
     }
   }
 
+  async handleDatabaseMigration() {
+    try {
+      const currentVersion = await AsyncStorage.getItem('database_version');
+      
+      if (currentVersion === null || parseInt(currentVersion) < this.dbVersion) {
+        console.log('Database schema outdated, resetting database...');
+        
+        // Drop all existing tables
+        await this.resetDatabase();
+        
+        // Update version
+        await AsyncStorage.setItem('database_version', this.dbVersion.toString());
+        console.log(`Database reset to version ${this.dbVersion}`);
+      }
+    } catch (error) {
+      console.error('Migration error:', error);
+      // If migration fails, try to reset completely
+      await this.resetDatabase();
+      await AsyncStorage.setItem('database_version', this.dbVersion.toString());
+    }
+  }
+
+  async resetDatabase() {
+    try {
+      // Drop all tables if they exist
+      const tables = ['products', 'categories', 'banners', 'cart_items', 'favorites', 'cache'];
+      
+      for (const table of tables) {
+        await this.db.execAsync(`DROP TABLE IF EXISTS ${table}`);
+      }
+      
+      console.log('All tables dropped successfully');
+    } catch (error) {
+      console.error('Reset database error:', error);
+    }
+  }
+
   async createTables() {
-    // Categories table
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        image TEXT,
-        icon TEXT,
-        color TEXT DEFAULT '#e53e3e',
-        order_index INTEGER DEFAULT 0,
-        is_active BOOLEAN DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    try {
+      // Categories table
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS categories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          image TEXT,
+          icon TEXT,
+          color TEXT DEFAULT '#e53e3e',
+          order_index INTEGER DEFAULT 0,
+          is_active BOOLEAN DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
 
-    // Products table
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        description TEXT,
-        price REAL NOT NULL,
-        original_price REAL,
-        category_id INTEGER,
-        images TEXT, -- JSON array of image URLs
-        stock INTEGER DEFAULT 0,
-        sku TEXT,
-        brand TEXT,
-        rating REAL DEFAULT 0,
-        reviews_count INTEGER DEFAULT 0,
-        tags TEXT, -- JSON array
-        is_featured BOOLEAN DEFAULT 0,
-        is_on_sale BOOLEAN DEFAULT 0,
-        is_active BOOLEAN DEFAULT 1,
-        autods_id TEXT, -- AutoDS product ID
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (category_id) REFERENCES categories (id)
-      );
-    `);
+      // Products table - Comprehensive schema
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS products (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          autods_id TEXT UNIQUE,
+          sku TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          price REAL DEFAULT 0,
+          original_price REAL,
+          shipping_price REAL DEFAULT 0,
+          quantity INTEGER DEFAULT 0,
+          main_picture_url TEXT,
+          images TEXT DEFAULT '[]',
+          tags TEXT DEFAULT '[]',
+          status INTEGER DEFAULT 2,
+          sold_count INTEGER DEFAULT 0,
+          total_profit REAL DEFAULT 0,
+          supplier_title TEXT,
+          supplier_url TEXT,
+          supplier_price REAL DEFAULT 0,
+          item_specifics TEXT DEFAULT '{}',
+          created_date DATETIME,
+          modified_at DATETIME,
+          synced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          raw_data TEXT,
+          category_id INTEGER,
+          brand TEXT,
+          rating REAL DEFAULT 0,
+          reviews_count INTEGER DEFAULT 0,
+          is_featured BOOLEAN DEFAULT 0,
+          is_on_sale BOOLEAN DEFAULT 0,
+          is_active BOOLEAN DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (category_id) REFERENCES categories (id)
+        );
+      `);
 
-    // Banners table
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS banners (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        subtitle TEXT,
-        image TEXT NOT NULL,
-        action_type TEXT DEFAULT 'category', -- category, product, url
-        action_value TEXT, -- category_id, product_id, or URL
-        background_color TEXT DEFAULT '#e53e3e',
-        text_color TEXT DEFAULT '#ffffff',
-        order_index INTEGER DEFAULT 0,
-        is_active BOOLEAN DEFAULT 1,
-        start_date DATETIME,
-        end_date DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+      // Banners table
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS banners (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT,
+          subtitle TEXT,
+          image TEXT NOT NULL,
+          action_type TEXT DEFAULT 'category',
+          action_value TEXT,
+          background_color TEXT DEFAULT '#e53e3e',
+          text_color TEXT DEFAULT '#ffffff',
+          order_index INTEGER DEFAULT 0,
+          is_active BOOLEAN DEFAULT 1,
+          start_date DATETIME,
+          end_date DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
 
-    // Cart table
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS cart_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 1,
-        selected_variant TEXT, -- JSON for product variants
-        user_id TEXT DEFAULT 'guest',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES products (id)
-      );
-    `);
+      // Cart table - Fixed schema
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS cart_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          autods_id TEXT NOT NULL,
+          product_name TEXT NOT NULL,
+          price REAL NOT NULL,
+          shipping_price REAL DEFAULT 0,
+          image_url TEXT,
+          quantity INTEGER NOT NULL DEFAULT 1,
+          max_quantity INTEGER DEFAULT 999,
+          selected_variant TEXT,
+          user_id TEXT DEFAULT 'guest',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
 
-    // Favorites table
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS favorites (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        user_id TEXT DEFAULT 'guest',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES products (id)
-      );
-    `);
+      // Favorites table
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS favorites (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          autods_id TEXT NOT NULL,
+          product_name TEXT,
+          user_id TEXT DEFAULT 'guest',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
 
-    // Cache table for API responses
-    await this.db.execAsync(`
-      CREATE TABLE IF NOT EXISTS cache (
-        key TEXT PRIMARY KEY,
-        data TEXT NOT NULL,
-        expires_at DATETIME NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+      // Cache table
+      await this.db.execAsync(`
+        CREATE TABLE IF NOT EXISTS cache (
+          key TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Create indexes
+      await this.db.execAsync(`
+        CREATE INDEX IF NOT EXISTS idx_products_autods_id ON products(autods_id);
+        CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
+        CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+        CREATE INDEX IF NOT EXISTS idx_products_featured ON products(is_featured);
+        CREATE INDEX IF NOT EXISTS idx_products_sale ON products(is_on_sale);
+        CREATE INDEX IF NOT EXISTS idx_cart_autods_id ON cart_items(autods_id);
+        CREATE INDEX IF NOT EXISTS idx_favorites_autods_id ON favorites(autods_id);
+      `);
+
+      console.log('All tables created successfully');
+    } catch (error) {
+      console.error('Create tables error:', error);
+      throw error;
+    }
   }
 
   // Cache management
@@ -145,14 +221,10 @@ class DatabaseService {
   // Categories
   async getCategories() {
     try {
-      const cached = await this.getCachedData('categories');
-      if (cached) return cached;
-
       const categories = await this.db.getAllAsync(
         'SELECT * FROM categories WHERE is_active = 1 ORDER BY order_index, name'
       );
       
-      await this.setCachedData('categories', categories, 12);
       return categories;
     } catch (error) {
       console.error('Get categories error:', error);
@@ -167,8 +239,6 @@ class DatabaseService {
         [category.name, category.image, category.icon, category.color, category.order_index || 0]
       );
       
-      // Clear cache
-      await this.clearCache('categories');
       return result.lastInsertRowId;
     } catch (error) {
       console.error('Create category error:', error);
@@ -179,28 +249,28 @@ class DatabaseService {
   // Products
   async getProducts(filters = {}) {
     try {
-      let query = 'SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.is_active = 1';
+      let query = 'SELECT * FROM products WHERE is_active = 1';
       let params = [];
 
       if (filters.category_id) {
-        query += ' AND p.category_id = ?';
+        query += ' AND category_id = ?';
         params.push(filters.category_id);
       }
 
       if (filters.is_featured) {
-        query += ' AND p.is_featured = 1';
+        query += ' AND is_featured = 1';
       }
 
       if (filters.is_on_sale) {
-        query += ' AND p.is_on_sale = 1';
+        query += ' AND is_on_sale = 1';
       }
 
       if (filters.search) {
-        query += ' AND (p.name LIKE ? OR p.description LIKE ?)';
+        query += ' AND (title LIKE ? OR description LIKE ?)';
         params.push(`%${filters.search}%`, `%${filters.search}%`);
       }
 
-      query += ' ORDER BY p.created_at DESC';
+      query += ' ORDER BY created_at DESC';
 
       if (filters.limit) {
         query += ' LIMIT ?';
@@ -209,11 +279,12 @@ class DatabaseService {
 
       const products = await this.db.getAllAsync(query, params);
       
-      // Parse JSON fields
+      // Parse JSON fields safely
       return products.map(product => ({
         ...product,
-        images: product.images ? JSON.parse(product.images) : [],
-        tags: product.tags ? JSON.parse(product.tags) : []
+        images: this.safeJsonParse(product.images, []),
+        tags: this.safeJsonParse(product.tags, []),
+        item_specifics: this.safeJsonParse(product.item_specifics, {})
       }));
     } catch (error) {
       console.error('Get products error:', error);
@@ -224,15 +295,16 @@ class DatabaseService {
   async getProductById(id) {
     try {
       const product = await this.db.getFirstAsync(
-        'SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?',
-        [id]
+        'SELECT * FROM products WHERE autods_id = ? OR id = ?',
+        [id, id]
       );
       
       if (product) {
         return {
           ...product,
-          images: product.images ? JSON.parse(product.images) : [],
-          tags: product.tags ? JSON.parse(product.tags) : []
+          images: this.safeJsonParse(product.images, []),
+          tags: this.safeJsonParse(product.tags, []),
+          item_specifics: this.safeJsonParse(product.item_specifics, {})
         };
       }
       return null;
@@ -246,23 +318,23 @@ class DatabaseService {
     try {
       const result = await this.db.runAsync(`
         INSERT INTO products (
-          name, description, price, original_price, category_id, images, 
-          stock, sku, brand, is_featured, is_on_sale, tags, autods_id
+          autods_id, title, description, price, original_price, category_id, 
+          images, quantity, sku, brand, is_featured, is_on_sale, tags
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
-        product.name,
+        product.autods_id,
+        product.title || product.name,
         product.description,
         product.price,
         product.original_price || product.price,
         product.category_id,
         JSON.stringify(product.images || []),
-        product.stock || 0,
+        product.quantity || 0,
         product.sku,
         product.brand,
         product.is_featured ? 1 : 0,
         product.is_on_sale ? 1 : 0,
-        JSON.stringify(product.tags || []),
-        product.autods_id
+        JSON.stringify(product.tags || [])
       ]);
       
       return result.lastInsertRowId;
@@ -275,14 +347,10 @@ class DatabaseService {
   // Banners
   async getBanners() {
     try {
-      const cached = await this.getCachedData('banners');
-      if (cached) return cached;
-
       const banners = await this.db.getAllAsync(
-        'SELECT * FROM banners WHERE is_active = 1 AND (start_date IS NULL OR start_date <= CURRENT_TIMESTAMP) AND (end_date IS NULL OR end_date >= CURRENT_TIMESTAMP) ORDER BY order_index'
+        'SELECT * FROM banners WHERE is_active = 1 ORDER BY order_index'
       );
       
-      await this.setCachedData('banners', banners, 6);
       return banners;
     } catch (error) {
       console.error('Get banners error:', error);
@@ -306,7 +374,6 @@ class DatabaseService {
         ]
       );
       
-      await this.clearCache('banners');
       return result.lastInsertRowId;
     } catch (error) {
       console.error('Create banner error:', error);
@@ -315,26 +382,31 @@ class DatabaseService {
   }
 
   // Cart operations
-  async addToCart(productId, quantity = 1, userId = 'guest') {
+  async addToCart(item) {
     try {
-      // Check if item already exists
+      const { id: autods_id, name, price, image, quantity, maxQuantity, shippingPrice } = item;
+
       const existing = await this.db.getFirstAsync(
-        'SELECT * FROM cart_items WHERE product_id = ? AND user_id = ?',
-        [productId, userId]
+        'SELECT * FROM cart_items WHERE autods_id = ? AND user_id = ?',
+        [autods_id, 'guest']
       );
 
       if (existing) {
-        // Update quantity
+        const newQuantity = Math.min(existing.quantity + quantity, maxQuantity || 999);
         await this.db.runAsync(
-          'UPDATE cart_items SET quantity = quantity + ? WHERE id = ?',
-          [quantity, existing.id]
+          'UPDATE cart_items SET quantity = ? WHERE id = ?',
+          [newQuantity, existing.id]
         );
       } else {
-        // Insert new item
-        await this.db.runAsync(
-          'INSERT INTO cart_items (product_id, quantity, user_id) VALUES (?, ?, ?)',
-          [productId, quantity, userId]
-        );
+        await this.db.runAsync(`
+          INSERT INTO cart_items (
+            autods_id, product_name, price, shipping_price, 
+            image_url, quantity, max_quantity, user_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          autods_id, name, price, shippingPrice || 0, 
+          image, quantity, maxQuantity || 999, 'guest'
+        ]);
       }
     } catch (error) {
       console.error('Add to cart error:', error);
@@ -345,16 +417,10 @@ class DatabaseService {
   async getCartItems(userId = 'guest') {
     try {
       const items = await this.db.getAllAsync(`
-        SELECT ci.*, p.name, p.price, p.images, p.stock 
-        FROM cart_items ci 
-        JOIN products p ON ci.product_id = p.id 
-        WHERE ci.user_id = ?
+        SELECT * FROM cart_items WHERE user_id = ?
       `, [userId]);
       
-      return items.map(item => ({
-        ...item,
-        images: item.images ? JSON.parse(item.images) : []
-      }));
+      return items;
     } catch (error) {
       console.error('Get cart items error:', error);
       return [];
@@ -387,6 +453,14 @@ class DatabaseService {
   }
 
   // Utility methods
+  safeJsonParse(jsonString, defaultValue) {
+    try {
+      return jsonString ? JSON.parse(jsonString) : defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  }
+
   async clearCache(key = null) {
     try {
       if (key) {
@@ -398,70 +472,81 @@ class DatabaseService {
       console.error('Clear cache error:', error);
     }
   }
-async updateProductFromAutoDS(autodsProduct, transformedProduct) {
-  try {
-    const existing = await this.db.getFirstAsync(
-      'SELECT id FROM products WHERE autods_id = ?',
-      [autodsProduct.id]
-    );
 
-    if (existing) {
-      await this.db.runAsync(`
-        UPDATE products SET 
-          name = ?, price = ?, stock = ?, images = ?, 
-          updated_at = CURRENT_TIMESTAMP
-        WHERE autods_id = ?
-      `, [
-        transformedProduct.name,
-        transformedProduct.price,
-        transformedProduct.stock,
-        JSON.stringify(transformedProduct.images),
-        autodsProduct.id
-      ]);
-    } else {
-      await this.createProduct(transformedProduct);
-    }
-  } catch (error) {
-    console.error('Error updating product from AutoDS:', error);
-    throw error;
-  }
-}
-async upsertAutodsProduct(product) {
-  try {
-    // Check if product exists by autods_id
-    const existing = await this.db.getFirstAsync(
-      'SELECT id FROM products WHERE autods_id = ?',
-      [product.autods_id]
-    );
+  // Sync products from external source
+  async upsertProductFromSupabase(productData) {
+    try {
+      const existing = await this.db.getFirstAsync(
+        'SELECT id FROM products WHERE autods_id = ?',
+        [productData.autods_id]
+      );
 
-    if (existing) {
-      // Update existing product
-      await this.db.runAsync(`
-        UPDATE products SET 
-          name = ?, price = ?, stock = ?, images = ?, 
-          updated_at = CURRENT_TIMESTAMP 
-        WHERE autods_id = ?
-      `, [
-        product.name,
-        product.price,
-        product.stock,
-        JSON.stringify(product.images),
-        product.autods_id
-      ]);
-      return existing.id;
-    } else {
-      // Create new product
-      return await this.createProduct(product);
+      const values = [
+        productData.autods_id,
+        productData.sku,
+        productData.title,
+        productData.description,
+        parseFloat(productData.price) || 0,
+        parseFloat(productData.original_price || productData.price) || 0,
+        parseFloat(productData.shipping_price) || 0,
+        parseInt(productData.quantity) || 0,
+        productData.main_picture_url,
+        JSON.stringify(productData.images || []),
+        JSON.stringify(productData.tags || []),
+        parseInt(productData.status) || 2,
+        parseInt(productData.sold_count) || 0,
+        parseFloat(productData.total_profit) || 0,
+        productData.supplier_title,
+        productData.supplier_url,
+        parseFloat(productData.supplier_price) || 0,
+        JSON.stringify(productData.item_specifics || {}),
+        productData.created_date,
+        productData.modified_at,
+        JSON.stringify(productData.raw_data || productData),
+        productData.category_id || 1,
+        productData.brand,
+        parseFloat(productData.rating) || 0,
+        parseInt(productData.reviews_count) || 0,
+        productData.is_featured ? 1 : 0,
+        productData.is_on_sale ? 1 : 0
+      ];
+
+      if (existing) {
+        await this.db.runAsync(`
+          UPDATE products SET 
+            sku = ?, title = ?, description = ?, price = ?, original_price = ?,
+            shipping_price = ?, quantity = ?, main_picture_url = ?, images = ?, 
+            tags = ?, status = ?, sold_count = ?, total_profit = ?, 
+            supplier_title = ?, supplier_url = ?, supplier_price = ?, 
+            item_specifics = ?, created_date = ?, modified_at = ?, raw_data = ?,
+            category_id = ?, brand = ?, rating = ?, reviews_count = ?,
+            is_featured = ?, is_on_sale = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE autods_id = ?
+        `, [...values.slice(1), productData.autods_id]);
+        
+        return existing.id;
+      } else {
+        const result = await this.db.runAsync(`
+          INSERT INTO products (
+            autods_id, sku, title, description, price, original_price,
+            shipping_price, quantity, main_picture_url, images, tags, status,
+            sold_count, total_profit, supplier_title, supplier_url, 
+            supplier_price, item_specifics, created_date, modified_at, raw_data,
+            category_id, brand, rating, reviews_count, is_featured, is_on_sale
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, values);
+        
+        return result.lastInsertRowId;
+      }
+    } catch (error) {
+      console.error('Upsert product error:', error);
+      throw error;
     }
-  } catch (error) {
-    console.error('Upsert AutoDS product error:', error);
-    throw error;
   }
-}
-  // Initialize sample data (for development)
+
+  // Initialize sample data
   async initSampleData() {
     try {
-      // Check if data already exists
       const existingCategories = await this.db.getFirstAsync('SELECT COUNT(*) as count FROM categories');
       if (existingCategories.count > 0) return;
 
@@ -477,90 +562,59 @@ async upsertAutodsProduct(product) {
         await this.createCategory({ ...categories[i], order_index: i });
       }
 
-      // Sample banners
-      const banners = [
-        {
-          title: 'CYBER LINIO',
-          subtitle: '40% DSCNT in technology',
-          image: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800',
-          action_type: 'category',
-          action_value: '1',
-          background_color: '#8E24AA'
-        }
-      ];
-
-      for (let banner of banners) {
-        await this.createBanner(banner);
-      }
+      // Sample banner
+      await this.createBanner({
+        title: 'CYBER SALE',
+        subtitle: '40% OFF Technology',
+        image: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800',
+        action_type: 'category',
+        action_value: '1',
+        background_color: '#8E24AA'
+      });
 
       // Sample products
       const products = [
         {
-          name: 'MacBook Air M1',
+          autods_id: '1',
+          title: 'MacBook Air M1',
           description: 'Apple MacBook Air 13-inch with M1 chip',
           price: 29999,
           category_id: 1,
           images: ['https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=600'],
-          stock: 10,
+          quantity: 10,
           brand: 'Apple',
           is_featured: true
         },
         {
-          name: 'Sony WH/1000XM5',
+          autods_id: '2',
+          title: 'Sony WH-1000XM5',
           description: 'Premium wireless noise canceling headphones',
           price: 4999,
           category_id: 1,
           images: ['https://images.unsplash.com/photo-1583394838336-acd977736f90?w=600'],
-          stock: 25,
+          quantity: 25,
           brand: 'Sony'
         },
         {
-          name: 'FreeBuds Huawei',
+          autods_id: '3',
+          title: 'FreeBuds Huawei',
           description: 'Wireless earbuds with active noise cancellation',
           price: 1999,
           category_id: 1,
           images: ['https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=600'],
-          stock: 50,
+          quantity: 50,
           brand: 'Huawei'
         }
       ];
 
-     for (let product of products) {
+      for (let product of products) {
         await this.createProduct(product);
       }
 
+      console.log('Sample data initialized');
     } catch (error) {
       console.error('Init sample data error:', error);
     }
-  } // ADD THIS CLOSING BRACE
-
-  // Add pagination method AFTER the closing brace
-  async getProductsPaginated(page = 1, limit = 20, filters = {}) {
-    const offset = (page - 1) * limit;
-    
-    let query = 'SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.is_active = 1';
-    let params = [];
-
-    if (filters.category_id) {
-      query += ' AND p.category_id = ?';
-      params.push(filters.category_id);
-    }
-
-    if (filters.search) {
-      query += ' AND (p.name LIKE ? OR p.description LIKE ?)';
-      params.push(`%${filters.search}%`, `%${filters.search}%`);
-    }
-
-    query += ` ORDER BY p.created_at DESC LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    const products = await this.db.getAllAsync(query, params);
-    
-    return products.map(product => ({
-      ...product,
-      images: product.images ? JSON.parse(product.images) : [],
-      tags: product.tags ? JSON.parse(product.tags) : []
-    }));
   }
 }
 

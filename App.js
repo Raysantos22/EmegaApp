@@ -1,3 +1,4 @@
+// App.js - Fixed navigation structure to properly hide tabs on Product screen
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -5,22 +6,22 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { Provider as PaperProvider, MD3LightTheme } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Text, Alert, TouchableOpacity } from 'react-native';
 
 // Screens
 import HomeScreen from './src/screens/HomeScreen';
 import CategoryScreen from './src/screens/CategoryScreen';
-import ProductScreen from './src/screens/ProductScreen';
+import ProductDetailsScreen from './src/screens/ProductDetailsScreen';
 import CartScreen from './src/screens/CartScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SearchScreen from './src/screens/SearchScreen';
+import NotificationScreen from './src/screens/NotificationScreen';
 
 // Services
 import DatabaseService from './src/services/DatabaseService';
 import { CartProvider } from './src/context/CartContext';
 import { AuthProvider } from './src/context/AuthContext';
 import { NotificationProvider } from './src/context/NotificationContext';
-import NotificationScreen from './src/screens/NotificationScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -37,14 +38,10 @@ const theme = {
   },
 };
 
-// Add import
-
-// Update HomeStack to include NotificationScreen
 function HomeStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Home" component={HomeScreen} />
-      <Stack.Screen name="Product" component={ProductScreen} />
       <Stack.Screen name="Search" component={SearchScreen} />
       <Stack.Screen name="Cart" component={CartScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
@@ -56,7 +53,6 @@ function CategoryStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Categories" component={CategoryScreen} />
-      <Stack.Screen name="Product" component={ProductScreen} />
     </Stack.Navigator>
   );
 }
@@ -94,71 +90,172 @@ function TabNavigator() {
       <Tab.Screen 
         name="HomeTab" 
         component={HomeStack}
-        options={{ tabBarLabel: '' }}
+        options={{
+          tabBarLabel: '',
+        }}
       />
       <Tab.Screen 
         name="CategoryTab" 
         component={CategoryStack}
-        options={{ tabBarLabel: '' }}
+        options={{
+          tabBarLabel: '',
+        }}
       />
-        
       <Tab.Screen 
         name="Profile" 
         component={ProfileScreen} 
-        options={{ tabBarLabel: '' }}
+        options={{
+          tabBarLabel: '',
+        }}
       />
     </Tab.Navigator>
   );
 }
 
+// Main stack navigator that contains tabs and modal screens
+function MainStackNavigator() {
+  return (
+    <Stack.Navigator 
+      screenOptions={{ 
+        headerShown: false,
+        presentation: 'card'
+      }}
+    >
+      <Stack.Screen name="MainTabs" component={TabNavigator} />
+      <Stack.Screen 
+        name="Product" 
+        component={ProductDetailsScreen}
+        options={{
+          presentation: 'card',
+        }}
+      />
+    </Stack.Navigator>
+  );
+}
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
+  const [initError, setInitError] = useState(null);
 
   useEffect(() => {
     initializeApp();
   }, []);
 
-  // In App.js, update initializeApp:
-const initializeApp = async () => {
-  try {
-    await DatabaseService.initDatabase();
-    
-    // Check if we need to sync products
-    const products = await DatabaseService.getProducts({ limit: 1 });
-    if (products.length === 0) {
-      // First time - sync from AutoDS
-      console.log('Syncing products from AutoDS...');
-      await AutoDSService.syncProducts();
+  const initializeApp = async () => {
+    try {
+      console.log('Initializing app...');
+
+      // Initialize local database
+      await DatabaseService.initDatabase();
+      console.log('Database initialized successfully');
+
+      // Initialize sample data for development
+      await DatabaseService.initSampleData();
+      console.log('Sample data initialized');
+
+      // App is ready
+      setIsLoading(false);
+      console.log('App initialization complete');
+
+    } catch (error) {
+      console.error('Failed to initialize app:', error);
+      setIsLoading(false);
+      setInitError(error.message);
+      
+      // Show error alert
+      Alert.alert(
+        'Initialization Error',
+        'Failed to initialize the app. Please restart the application.',
+        [
+          { text: 'Retry', onPress: retryInitialization },
+          { text: 'OK', style: 'cancel' }
+        ]
+      );
     }
-    
-    await DatabaseService.initSampleData();
-    setIsLoading(false);
-  } catch (error) {
-    console.error('Failed to initialize app:', error);
-    setIsLoading(false);
-  }
-};
+  };
+
+  const retryInitialization = () => {
+    setIsLoading(true);
+    setInitError(null);
+    initializeApp();
+  };
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <View style={{ 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        backgroundColor: theme.colors.background 
+      }}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={{ 
+          marginTop: 16, 
+          fontSize: 16, 
+          color: '#666',
+          fontWeight: '500' 
+        }}>
+          Initializing app...
+        </Text>
+      </View>
+    );
+  }
+
+  if (initError) {
+    return (
+      <View style={{ 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        backgroundColor: theme.colors.background,
+        padding: 32
+      }}>
+        <Text style={{ 
+          fontSize: 18, 
+          color: '#333',
+          fontWeight: 'bold',
+          marginBottom: 16,
+          textAlign: 'center'
+        }}>
+          Initialization Failed
+        </Text>
+        <Text style={{ 
+          fontSize: 14, 
+          color: '#666',
+          textAlign: 'center',
+          marginBottom: 24
+        }}>
+          {initError}
+        </Text>
+        <TouchableOpacity
+          style={{
+            backgroundColor: theme.colors.primary,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            borderRadius: 8
+          }}
+          onPress={retryInitialization}
+        >
+          <Text style={{ color: 'white', fontWeight: 'bold' }}>
+            Retry
+          </Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
-  <PaperProvider theme={theme}>
-    <AuthProvider>
-      <NotificationProvider>
-        <CartProvider>
-          <NavigationContainer>
-            <StatusBar style="dark" />
-            <TabNavigator />
-          </NavigationContainer>
-        </CartProvider>
-      </NotificationProvider>
-    </AuthProvider>
-  </PaperProvider>
-);
+    <PaperProvider theme={theme}>
+      <AuthProvider>
+        <NotificationProvider>
+          <CartProvider>
+            <NavigationContainer>
+              <StatusBar style="dark" />
+              <MainStackNavigator />
+            </NavigationContainer>
+          </CartProvider>
+        </NotificationProvider>
+      </AuthProvider>
+    </PaperProvider>
+  );
 }

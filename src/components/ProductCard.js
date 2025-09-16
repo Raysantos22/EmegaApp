@@ -1,4 +1,4 @@
-// src/components/ProductCard.js
+// src/components/ProductCard.js - Fixed for Supabase data
 import React from 'react';
 import {
   View,
@@ -21,21 +21,39 @@ export default function ProductCard({
   showDiscount = false,
   compact = false 
 }) {
-  const discountPercentage = product.original_price && product.original_price > product.price
-    ? Math.round(((product.original_price - product.price) / product.original_price) * 100)
+  // Handle both original_price and price fields for discount calculation
+  const originalPrice = product.original_price || product.supplier_price;
+  const currentPrice = parseFloat(product.price) || 0;
+  const discountPercentage = originalPrice && originalPrice > currentPrice
+    ? Math.round(((originalPrice - currentPrice) / originalPrice) * 100)
     : 0;
 
   const formatPrice = (price) => {
-    return new Intl.NumberFormat('en-PH', {
-      style: 'currency',
-      currency: 'PHP',
-      minimumFractionDigits: 0,
-    }).format(price);
+    const numPrice = parseFloat(price) || 0;
+    return `$${numPrice.toFixed(2)}`;
   };
 
-  const primaryImage = product.images && product.images.length > 0 
-    ? product.images[0] 
-    : 'https://via.placeholder.com/300x300?text=No+Image';
+  // Handle different image field structures
+  const getProductImage = () => {
+    // First try main_picture_url (Supabase field)
+    if (product.main_picture_url) {
+      return product.main_picture_url;
+    }
+    
+    // Then try images array
+    if (product.images && Array.isArray(product.images) && product.images.length > 0) {
+      return product.images[0];
+    }
+    
+    // Fallback
+    return 'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=400&h=300&fit=crop';
+  };
+
+  // Get product stock (quantity in Supabase)
+  const stockCount = parseInt(product.quantity || product.stock) || 0;
+  
+  // Get product name (title in Supabase)
+  const productName = product.title || product.name || 'Unnamed Product';
 
   return (
     <TouchableOpacity
@@ -49,7 +67,7 @@ export default function ProductCard({
     >
       <View style={[styles.imageContainer, compact ? styles.compactImageContainer : null]}>
         <Image
-          source={{ uri: primaryImage }}
+          source={{ uri: getProductImage() }}
           style={styles.image}
           contentFit="cover"
           transition={200}
@@ -62,7 +80,7 @@ export default function ProductCard({
           </View>
         )}
 
-        {/* Featured Badge */}
+        {/* Featured Badge - check if product is featured */}
         {product.is_featured && (
           <View style={styles.featuredBadge}>
             <Ionicons name="star" size={12} color="white" />
@@ -75,13 +93,13 @@ export default function ProductCard({
         </TouchableOpacity>
 
         {/* Stock Status */}
-        {product.stock <= 5 && product.stock > 0 && (
+        {stockCount <= 5 && stockCount > 0 && (
           <View style={styles.lowStockBadge}>
-            <Text style={styles.lowStockText}>Only {product.stock} left</Text>
+            <Text style={styles.lowStockText}>Only {stockCount} left</Text>
           </View>
         )}
 
-        {product.stock === 0 && (
+        {stockCount === 0 && (
           <View style={styles.outOfStockOverlay}>
             <Text style={styles.outOfStockText}>Out of Stock</Text>
           </View>
@@ -90,7 +108,7 @@ export default function ProductCard({
 
       <View style={[styles.content, compact ? styles.compactContent : null]}>
         <Text style={[styles.name, compact ? styles.compactName : null]} numberOfLines={2}>
-          {product.name}
+          {productName}
         </Text>
 
         {!compact && product.brand && (
@@ -101,40 +119,33 @@ export default function ProductCard({
 
         <View style={styles.priceContainer}>
           <Text style={[styles.price, compact ? styles.compactPrice : null]}>
-            {formatPrice(product.price)}
+            {formatPrice(currentPrice)}
           </Text>
           
-          {product.original_price && product.original_price > product.price && (
+          {originalPrice && originalPrice > currentPrice && (
             <Text style={[styles.originalPrice, compact ? styles.compactOriginalPrice : null]}>
-              {formatPrice(product.original_price)}
+              {formatPrice(originalPrice)}
             </Text>
           )}
         </View>
 
         {!compact && (
           <>
-            {/* Rating */}
-            {product.rating > 0 && (
+            {/* Rating - use sold_count as popularity indicator */}
+            {product.sold_count > 0 && (
               <View style={styles.ratingContainer}>
-                <View style={styles.stars}>
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <Ionicons
-                      key={star}
-                      name={star <= product.rating ? "star" : "star-outline"}
-                      size={12}
-                      color="#ffc107"
-                    />
-                  ))}
-                </View>
+                <Ionicons name="trending-up" size={12} color="#4CAF50" />
                 <Text style={styles.reviewsCount}>
-                  ({product.reviews_count || 0})
+                  {product.sold_count} sold
                 </Text>
               </View>
             )}
 
-            {/* Free Shipping */}
+            {/* Shipping */}
             <View style={styles.shippingContainer}>
-              <Text style={styles.freeShipping}>Free shipping</Text>
+              <Text style={styles.freeShipping}>
+                {parseFloat(product.shipping_price || 0) === 0 ? 'Free shipping' : `Shipping: ${formatPrice(product.shipping_price)}`}
+              </Text>
             </View>
           </>
         )}
@@ -296,6 +307,7 @@ const styles = StyleSheet.create({
   reviewsCount: {
     fontSize: 11,
     color: '#666',
+    marginLeft: 4,
   },
   shippingContainer: {
     marginTop: 4,

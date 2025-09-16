@@ -1,291 +1,256 @@
 // src/services/SupabaseService.js
-import { createClient } from '@supabase/supabase-js';
-import DatabaseService from './DatabaseService';
+import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = 'YOUR_SUPABASE_URL';
-const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://msbqgxjbsxztcnkxziju.supabase.co'
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zYnFneGpic3h6dGNua3h6aWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMzA5ODgsImV4cCI6MjA3MzYwNjk4OH0.JkMIH03-rWdllFLTTuTzbGk_m-v9C47kNqUZLOA2VdI'
 
 class SupabaseService {
   constructor() {
-    this.supabase = createClient(supabaseUrl, supabaseKey);
-    this.isInitialized = false;
+    this.supabase = createClient(supabaseUrl, supabaseAnonKey)
   }
 
-  async init() {
-    if (!this.isInitialized) {
-      console.log('Initializing Supabase service...');
-      this.isInitialized = true;
-    }
-  }
-
-  // Categories
-  async syncCategories() {
-    try {
-      const { data, error } = await this.supabase
-        .from('categories')
-        .select('*')
-        .eq('is_active', true)
-        .order('order_index');
-
-      if (error) throw error;
-
-      // Clear local cache and update local database
-      await DatabaseService.clearCache('categories');
+  // Transform Supabase product to match your mobile app format
+  transformProduct(supabaseProduct) {
+    return {
+      id: supabaseProduct.autods_id, // Using autods_id as main ID for consistency
+      autods_id: supabaseProduct.autods_id,
+      name: supabaseProduct.title,
+      title: supabaseProduct.title,
+      description: supabaseProduct.description,
+      price: parseFloat(supabaseProduct.price) || 0,
+      original_price: parseFloat(supabaseProduct.price) || 0,
+      shipping_price: parseFloat(supabaseProduct.shipping_price) || 0,
+      stock: supabaseProduct.quantity || 0,
+      quantity: supabaseProduct.quantity || 0,
+      sku: supabaseProduct.sku,
+      status: supabaseProduct.status,
+      site_id: supabaseProduct.site_id,
       
-      // Update local SQLite database
-      for (const category of data) {
-        await this.upsertLocalCategory(category);
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Sync categories error:', error);
-      // Fallback to local data
-      return await DatabaseService.getCategories();
+      // Images handling
+      images: Array.isArray(supabaseProduct.images) ? supabaseProduct.images : [],
+      main_picture_url: supabaseProduct.main_picture_url,
+      
+      // Sales data
+      sold_count: supabaseProduct.sold_count || 0,
+      total_profit: parseFloat(supabaseProduct.total_profit) || 0,
+      
+      // Supplier info
+      supplier_url: supabaseProduct.supplier_url,
+      supplier_title: supabaseProduct.supplier_title,
+      supplier_price: parseFloat(supabaseProduct.supplier_price) || 0,
+      
+      // Categories and tags
+      tags: Array.isArray(supabaseProduct.tags) ? supabaseProduct.tags : [],
+      item_specifics: supabaseProduct.item_specifics || {},
+      
+      // Dates
+      created_at: supabaseProduct.created_date,
+      modified_at: supabaseProduct.modified_at,
+      updated_at: supabaseProduct.modified_at,
+      
+      // App-specific fields
+      is_featured: Math.random() > 0.8, // Randomly mark some as featured
+      is_on_sale: supabaseProduct.total_profit > 0,
+      rating: 4 + Math.random(), // Random rating between 4-5
+      reviews_count: Math.floor(Math.random() * 100),
+      freeShipping: supabaseProduct.shipping_price === 0
     }
   }
 
-  async upsertLocalCategory(category) {
-    try {
-      // Check if category exists locally
-      const existing = await DatabaseService.db.getFirstAsync(
-        'SELECT id FROM categories WHERE id = ?',
-        [category.id]
-      );
-
-      if (existing) {
-        // Update existing
-        await DatabaseService.db.runAsync(
-          'UPDATE categories SET name = ?, image = ?, icon = ?, color = ?, order_index = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-          [category.name, category.image, category.icon, category.color, category.order_index, category.id]
-        );
-      } else {
-        // Insert new
-        await DatabaseService.db.runAsync(
-          'INSERT INTO categories (id, name, image, icon, color, order_index) VALUES (?, ?, ?, ?, ?, ?)',
-          [category.id, category.name, category.image, category.icon, category.color, category.order_index]
-        );
-      }
-    } catch (error) {
-      console.error('Upsert local category error:', error);
-    }
-  }
-
-  // Products
-  async syncProducts(categoryId = null, limit = 50) {
+  // Get products with filters and pagination
+  async getProducts(filters = {}) {
     try {
       let query = this.supabase
         .from('products')
         .select('*')
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(limit);
+        .eq('status', 2) // Only active products
 
-      if (categoryId) {
-        query = query.eq('category_id', categoryId);
+      // Apply filters
+      if (filters.search) {
+        query = query.or(`title.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      // Update local SQLite database
-      for (const product of data) {
-        await this.upsertLocalProduct(product);
+      if (filters.site_id) {
+        query = query.eq('site_id', filters.site_id)
       }
 
-      return data;
+      if (filters.min_price) {
+        query = query.gte('price', filters.min_price)
+      }
+
+      if (filters.max_price) {
+        query = query.lte('price', filters.max_price)
+      }
+
+      // Sorting
+      const sortBy = filters.sort_by || 'modified_at'
+      const sortOrder = filters.sort_order || 'desc'
+      query = query.order(sortBy, { ascending: sortOrder === 'asc' })
+
+      // Pagination
+      if (filters.page && filters.limit) {
+        const from = (filters.page - 1) * filters.limit
+        const to = from + filters.limit - 1
+        query = query.range(from, to)
+      } else if (filters.limit) {
+        query = query.limit(filters.limit)
+      }
+
+      const { data, error, count } = await query
+
+      if (error) {
+        throw error
+      }
+
+      const transformedProducts = data ? data.map(product => this.transformProduct(product)) : []
+
+      return {
+        products: transformedProducts,
+        count: count,
+        page: filters.page || 1,
+        limit: filters.limit || data?.length || 0
+      }
+
     } catch (error) {
-      console.error('Sync products error:', error);
-      // Fallback to local data
-      return await DatabaseService.getProducts({ category_id: categoryId, limit });
+      console.error('Error fetching products from Supabase:', error)
+      throw new Error(`Failed to fetch products: ${error.message}`)
     }
   }
 
-  async upsertLocalProduct(product) {
-    try {
-      const existing = await DatabaseService.db.getFirstAsync(
-        'SELECT id FROM products WHERE id = ?',
-        [product.id]
-      );
-
-      if (existing) {
-        // Update existing
-        await DatabaseService.db.runAsync(`
-          UPDATE products SET 
-            name = ?, description = ?, price = ?, original_price = ?, 
-            category_id = ?, images = ?, stock = ?, sku = ?, brand = ?, 
-            rating = ?, reviews_count = ?, tags = ?, is_featured = ?, 
-            is_on_sale = ?, autods_id = ?, updated_at = CURRENT_TIMESTAMP 
-          WHERE id = ?
-        `, [
-          product.name, product.description, product.price, product.original_price,
-          product.category_id, JSON.stringify(product.images), product.stock, 
-          product.sku, product.brand, product.rating, product.reviews_count,
-          JSON.stringify(product.tags), product.is_featured, product.is_on_sale,
-          product.autods_id, product.id
-        ]);
-      } else {
-        // Insert new
-        await DatabaseService.db.runAsync(`
-          INSERT INTO products (
-            id, name, description, price, original_price, category_id, images, 
-            stock, sku, brand, rating, reviews_count, tags, is_featured, 
-            is_on_sale, autods_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          product.id, product.name, product.description, product.price, 
-          product.original_price, product.category_id, JSON.stringify(product.images),
-          product.stock, product.sku, product.brand, product.rating, 
-          product.reviews_count, JSON.stringify(product.tags), product.is_featured,
-          product.is_on_sale, product.autods_id
-        ]);
-      }
-    } catch (error) {
-      console.error('Upsert local product error:', error);
-    }
-  }
-
-  // Banners
-  async syncBanners() {
+  // Get single product by AutoDS ID
+  async getProductById(autodsId) {
     try {
       const { data, error } = await this.supabase
-        .from('banners')
+        .from('products')
         .select('*')
-        .eq('is_active', true)
-        .order('order_index');
+        .eq('autods_id', autodsId)
+        .single()
 
-      if (error) throw error;
-
-      await DatabaseService.clearCache('banners');
-
-      for (const banner of data) {
-        await this.upsertLocalBanner(banner);
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return null // Product not found
+        }
+        throw error
       }
 
-      return data;
+      return this.transformProduct(data)
+
     } catch (error) {
-      console.error('Sync banners error:', error);
-      return await DatabaseService.getBanners();
+      console.error('Error fetching product by ID:', error)
+      throw new Error(`Failed to fetch product: ${error.message}`)
     }
   }
 
-  async upsertLocalBanner(banner) {
-    try {
-      const existing = await DatabaseService.db.getFirstAsync(
-        'SELECT id FROM banners WHERE id = ?',
-        [banner.id]
-      );
-
-      if (existing) {
-        await DatabaseService.db.runAsync(
-          'UPDATE banners SET title = ?, subtitle = ?, image = ?, action_type = ?, action_value = ?, background_color = ?, text_color = ?, order_index = ? WHERE id = ?',
-          [banner.title, banner.subtitle, banner.image, banner.action_type, banner.action_value, banner.background_color, banner.text_color, banner.order_index, banner.id]
-        );
-      } else {
-        await DatabaseService.db.runAsync(
-          'INSERT INTO banners (id, title, subtitle, image, action_type, action_value, background_color, text_color, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [banner.id, banner.title, banner.subtitle, banner.image, banner.action_type, banner.action_value, banner.background_color, banner.text_color, banner.order_index]
-        );
-      }
-    } catch (error) {
-      console.error('Upsert local banner error:', error);
-    }
-  }
-
-  // Orders
-  async createOrder(orderData) {
+  // Get featured products
+  async getFeaturedProducts(limit = 10) {
     try {
       const { data, error } = await this.supabase
-        .from('orders')
-        .insert([orderData])
-        .select();
+        .from('products')
+        .select('*')
+        .eq('status', 2)
+        .gt('total_profit', 0) // Products with profit as "featured"
+        .order('total_profit', { ascending: false })
+        .limit(limit)
 
-      if (error) throw error;
-      return { success: true, data: data[0] };
+      if (error) throw error
+
+      return data ? data.map(product => this.transformProduct(product)) : []
+
     } catch (error) {
-      console.error('Create order error:', error);
-      return { success: false, error: error.message };
+      console.error('Error fetching featured products:', error)
+      return []
     }
   }
 
-  // User Authentication
-  async signIn(email, password) {
+  // Get products on sale (with profit)
+  async getSaleProducts(limit = 10) {
     try {
-      const { data, error } = await this.supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error } = await this.supabase
+        .from('products')
+        .select('*')
+        .eq('status', 2)
+        .gt('total_profit', 5) // Products with good profit margin
+        .order('total_profit', { ascending: false })
+        .limit(limit)
 
-      if (error) throw error;
-      return { success: true, user: data.user };
+      if (error) throw error
+
+      return data ? data.map(product => this.transformProduct(product)) : []
+
     } catch (error) {
-      console.error('Sign in error:', error);
-      return { success: false, error: error.message };
+      console.error('Error fetching sale products:', error)
+      return []
     }
   }
 
-  async signUp(email, password, metadata = {}) {
+  // Get recently added products
+  async getRecentProducts(limit = 20) {
     try {
-      const { data, error } = await this.supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: metadata,
-        },
-      });
+      const { data, error } = await this.supabase
+        .from('products')
+        .select('*')
+        .eq('status', 2)
+        .order('modified_at', { ascending: false })
+        .limit(limit)
 
-      if (error) throw error;
-      return { success: true, user: data.user };
+      if (error) throw error
+
+      return data ? data.map(product => this.transformProduct(product)) : []
+
     } catch (error) {
-      console.error('Sign up error:', error);
-      return { success: false, error: error.message };
+      console.error('Error fetching recent products:', error)
+      return []
     }
   }
 
-  async signOut() {
+  // Search products
+  async searchProducts(query, filters = {}) {
+    const searchFilters = {
+      ...filters,
+      search: query,
+      limit: filters.limit || 50
+    }
+
+    return this.getProducts(searchFilters)
+  }
+
+  // Get product statistics
+  async getProductStats() {
     try {
-      const { error } = await this.supabase.auth.signOut();
-      if (error) throw error;
-      return { success: true };
+      const { data, error } = await this.supabase
+        .from('products')
+        .select('status')
+
+      if (error) throw error
+
+      const stats = {
+        total: data.length,
+        active: data.filter(p => p.status === 2).length,
+        inactive: data.filter(p => p.status !== 2).length
+      }
+
+      return stats
+
     } catch (error) {
-      console.error('Sign out error:', error);
-      return { success: false, error: error.message };
+      console.error('Error fetching product stats:', error)
+      return { total: 0, active: 0, inactive: 0 }
     }
   }
 
-  // Real-time subscriptions
-  subscribeToProducts(callback) {
-    return this.supabase
-      .channel('products')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, callback)
-      .subscribe();
-  }
-
-  subscribeToCategories(callback) {
-    return this.supabase
-      .channel('categories')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, callback)
-      .subscribe();
-  }
-
-  // Periodic sync
-  async performFullSync() {
+  // Check connection to Supabase
+  async testConnection() {
     try {
-      console.log('Starting full sync...');
-      
-      await Promise.all([
-        this.syncCategories(),
-        this.syncBanners(),
-        this.syncProducts(),
-      ]);
+      const { data, error } = await this.supabase
+        .from('products')
+        .select('count')
+        .limit(1)
 
-      console.log('Full sync completed');
-      return { success: true };
+      return !error
     } catch (error) {
-      console.error('Full sync error:', error);
-      return { success: false, error: error.message };
+      console.error('Supabase connection test failed:', error)
+      return false
     }
   }
 }
 
-export default new SupabaseService();
+export default new SupabaseService()

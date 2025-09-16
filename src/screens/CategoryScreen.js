@@ -1,4 +1,4 @@
-// src/screens/CategoryScreen.js
+// src/screens/CategoryScreen.js - Updated to use Supabase
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -12,10 +12,12 @@ import {
 } from 'react-native';
 import { Searchbar, Chip, ActivityIndicator } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { FlatGrid } from 'react-native-super-grid';
 import { useFocusEffect } from '@react-navigation/native';
 
 import DatabaseService from '../services/DatabaseService';
+import SupabaseProductService from '../services/SupabaseProductService';
 import ProductCard from '../components/ProductCard';
 
 const { width } = Dimensions.get('window');
@@ -28,8 +30,9 @@ export default function CategoryScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filters, setFilters] = useState({
-    sortBy: 'newest', // newest, price_low, price_high, rating
-    priceRange: 'all', // all, under_1000, 1000_5000, above_5000
+    sortBy: 'modified_at',
+    sortOrder: 'desc',
+    priceRange: 'all',
     inStock: false,
   });
 
@@ -63,20 +66,20 @@ export default function CategoryScreen({ navigation, route }) {
     try {
       setLoading(true);
       
-      let queryFilters = {};
-      
-      if (selectedCategory) {
-        queryFilters.category_id = selectedCategory;
-      }
-      
-      if (searchQuery.trim()) {
-        queryFilters.search = searchQuery.trim();
-      }
+      // Use SupabaseProductService instead of DatabaseService
+      const result = await SupabaseProductService.getProducts({
+        page: 1,
+        limit: 100, // Load more items for categories
+        search: searchQuery.trim() || undefined,
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
+        hasStock: filters.inStock
+      });
 
-      let productsData = await DatabaseService.getProducts(queryFilters);
+      let productsData = result.products || [];
       
-      // Apply additional filters
-      productsData = applyFilters(productsData);
+      // Apply local filters that aren't handled by Supabase
+      productsData = applyLocalFilters(productsData);
       
       setProducts(productsData);
     } catch (error) {
@@ -90,16 +93,21 @@ export default function CategoryScreen({ navigation, route }) {
   const loadProductsByFilter = async (filterType) => {
     try {
       setLoading(true);
-      let queryFilters = {};
+      let products = [];
       
       if (filterType === 'featured') {
-        queryFilters.is_featured = true;
+        products = await SupabaseProductService.getFeaturedProducts(50);
       } else if (filterType === 'on_sale') {
-        queryFilters.is_on_sale = true;
+        products = await SupabaseProductService.getHotSales(50);
+      } else {
+        const result = await SupabaseProductService.getProducts({ 
+          page: 1, 
+          limit: 100 
+        });
+        products = result.products || [];
       }
 
-      const productsData = await DatabaseService.getProducts(queryFilters);
-      setProducts(productsData);
+      setProducts(products);
     } catch (error) {
       console.error('Error loading filtered products:', error);
     } finally {
@@ -107,48 +115,30 @@ export default function CategoryScreen({ navigation, route }) {
     }
   };
 
-  const applyFilters = (productsData) => {
+  const applyLocalFilters = (productsData) => {
     let filtered = [...productsData];
 
-    // Price range filter
+    // Price range filter (only if not 'all')
     if (filters.priceRange !== 'all') {
       filtered = filtered.filter(product => {
-        if (filters.priceRange === 'under_1000') return product.price < 1000;
-        if (filters.priceRange === '1000_5000') return product.price >= 1000 && product.price <= 5000;
-        if (filters.priceRange === 'above_5000') return product.price > 5000;
+        const price = parseFloat(product.price) || 0;
+        if (filters.priceRange === 'under_1000') return price < 1000;
+        if (filters.priceRange === '1000_5000') return price >= 1000 && price <= 5000;
+        if (filters.priceRange === 'above_5000') return price > 5000;
         return true;
       });
     }
-
-    // Stock filter
-    if (filters.inStock) {
-      filtered = filtered.filter(product => product.stock > 0);
-    }
-
-    // Sorting
-    filtered.sort((a, b) => {
-      switch (filters.sortBy) {
-        case 'price_low':
-          return a.price - b.price;
-        case 'price_high':
-          return b.price - a.price;
-        case 'rating':
-          return b.rating - a.rating;
-        case 'newest':
-        default:
-          return new Date(b.created_at) - new Date(a.created_at);
-      }
-    });
 
     return filtered;
   };
 
   useEffect(() => {
     loadProducts();
-  }, [selectedCategory, searchQuery, filters]);
+  }, [searchQuery, filters]);
 
   const onRefresh = async () => {
     setRefreshing(true);
+    SupabaseProductService.clearCache();
     await DatabaseService.clearCache();
     await loadCategories();
     await loadProducts();
@@ -157,10 +147,16 @@ export default function CategoryScreen({ navigation, route }) {
 
   const handleCategoryPress = (categoryId) => {
     setSelectedCategory(selectedCategory === categoryId ? null : categoryId);
+    // Note: For now, category filtering is disabled since Supabase products 
+    // don't have traditional category_id mapping. You can implement tag-based 
+    // filtering here if needed.
   };
 
   const handleProductPress = (product) => {
-    navigation.navigate('Product', { productId: product.id });
+    navigation.navigate('Product', { 
+      productId: product.autods_id, // Use autods_id for Supabase products
+      product: product // Pass product data for immediate display
+    });
   };
 
   const handleSearch = (query) => {
@@ -175,9 +171,9 @@ export default function CategoryScreen({ navigation, route }) {
   };
 
   const getSelectedCategoryName = () => {
-    if (!selectedCategory) return 'All Categories';
+    if (!selectedCategory) return 'All Products';
     const category = categories.find(c => c.id === selectedCategory);
-    return category ? category.name : 'All Categories';
+    return category ? category.name : 'All Products';
   };
 
   const renderHeader = () => (
@@ -231,21 +227,19 @@ export default function CategoryScreen({ navigation, route }) {
           All
         </Chip>
         
-        {categories.map((category) => (
+        {/* For now, show basic category chips. You can implement tag-based filtering later */}
+        {['Technology', 'Monitors', 'Computers', 'Accessories'].map((categoryName, index) => (
           <Chip
-            key={category.id}
-            selected={selectedCategory === category.id}
-            onPress={() => handleCategoryPress(category.id)}
-            style={[
-              styles.categoryChip,
-              selectedCategory === category.id && styles.selectedCategoryChip
-            ]}
-            textStyle={[
-              styles.categoryChipText,
-              selectedCategory === category.id && styles.selectedCategoryChipText
-            ]}
+            key={index}
+            selected={false}
+            onPress={() => {
+              // Implement tag-based search
+              setSearchQuery(categoryName);
+            }}
+            style={styles.categoryChip}
+            textStyle={styles.categoryChipText}
           >
-            {category.name}
+            {categoryName}
           </Chip>
         ))}
       </ScrollView>
@@ -262,13 +256,13 @@ export default function CategoryScreen({ navigation, route }) {
         <TouchableOpacity
           style={[
             styles.filterChip,
-            filters.sortBy === 'newest' && styles.activeFilterChip
+            filters.sortBy === 'modified_at' && filters.sortOrder === 'desc' && styles.activeFilterChip
           ]}
-          onPress={() => toggleFilter('sortBy', 'newest')}
+          onPress={() => toggleFilter('sortBy', 'modified_at')}
         >
           <Text style={[
             styles.filterChipText,
-            filters.sortBy === 'newest' && styles.activeFilterChipText
+            filters.sortBy === 'modified_at' && styles.activeFilterChipText
           ]}>
             Newest
           </Text>
@@ -277,13 +271,16 @@ export default function CategoryScreen({ navigation, route }) {
         <TouchableOpacity
           style={[
             styles.filterChip,
-            filters.sortBy === 'price_low' && styles.activeFilterChip
+            filters.sortBy === 'price' && filters.sortOrder === 'asc' && styles.activeFilterChip
           ]}
-          onPress={() => toggleFilter('sortBy', 'price_low')}
+          onPress={() => {
+            toggleFilter('sortBy', 'price');
+            toggleFilter('sortOrder', 'asc');
+          }}
         >
           <Text style={[
             styles.filterChipText,
-            filters.sortBy === 'price_low' && styles.activeFilterChipText
+            filters.sortBy === 'price' && filters.sortOrder === 'asc' && styles.activeFilterChipText
           ]}>
             Price: Low to High
           </Text>
@@ -292,13 +289,16 @@ export default function CategoryScreen({ navigation, route }) {
         <TouchableOpacity
           style={[
             styles.filterChip,
-            filters.sortBy === 'price_high' && styles.activeFilterChip
+            filters.sortBy === 'price' && filters.sortOrder === 'desc' && styles.activeFilterChip
           ]}
-          onPress={() => toggleFilter('sortBy', 'price_high')}
+          onPress={() => {
+            toggleFilter('sortBy', 'price');
+            toggleFilter('sortOrder', 'desc');
+          }}
         >
           <Text style={[
             styles.filterChipText,
-            filters.sortBy === 'price_high' && styles.activeFilterChipText
+            filters.sortBy === 'price' && filters.sortOrder === 'desc' && styles.activeFilterChipText
           ]}>
             Price: High to Low
           </Text>
@@ -340,7 +340,7 @@ export default function CategoryScreen({ navigation, route }) {
           <Text style={styles.emptySubtitle}>
             {searchQuery 
               ? `No products found for "${searchQuery}"`
-              : 'No products available in this category'
+              : 'No products available'
             }
           </Text>
         </View>
@@ -354,13 +354,37 @@ export default function CategoryScreen({ navigation, route }) {
         style={styles.productGrid}
         spacing={12}
         renderItem={({ item }) => (
-          <ProductCard
-            product={item}
+          <TouchableOpacity
+            style={styles.productCard}
             onPress={() => handleProductPress(item)}
-            showDiscount
-          />
+          >
+            <View style={styles.productImageContainer}>
+              <Image
+                source={{ 
+                  uri: item.main_picture_url || 'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=400&h=300&fit=crop' 
+                }}
+                style={styles.productImage}
+                contentFit="cover"
+              />
+            </View>
+            
+            <View style={styles.productInfo}>
+              <Text style={styles.productName} numberOfLines={2}>
+                {item.title}
+              </Text>
+              <Text style={styles.productPrice}>
+                ${parseFloat(item.price || 0).toLocaleString()}
+              </Text>
+              {item.shipping_price === 0 && (
+                <Text style={styles.freeShipping}>Free shipping</Text>
+              )}
+              <Text style={styles.stockText}>
+                {item.quantity > 0 ? `${item.quantity} in stock` : 'Out of stock'}
+              </Text>
+            </View>
+          </TouchableOpacity>
         )}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item) => item.autods_id}
         showsVerticalScrollIndicator={false}
       />
     );
@@ -505,6 +529,52 @@ const styles = StyleSheet.create({
   productGrid: {
     padding: 16,
     backgroundColor: '#fafafa',
+  },
+  productCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  productImageContainer: {
+    height: 140,
+    backgroundColor: '#F8F8F8',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    overflow: 'hidden',
+  },
+  productImage: {
+    width: '100%',
+    height: '100%',
+  },
+  productInfo: {
+    padding: 12,
+  },
+  productName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 6,
+    lineHeight: 18,
+  },
+  productPrice: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#E53E3E',
+    marginBottom: 4,
+  },
+  freeShipping: {
+    fontSize: 11,
+    color: '#4CAF50',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  stockText: {
+    fontSize: 11,
+    color: '#666',
   },
   loadingContainer: {
     flex: 1,
