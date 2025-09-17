@@ -1,4 +1,4 @@
-// App.js - Fixed navigation structure to properly hide tabs on Product screen
+// App.js - Fixed navigation structure to hide bottom tabs on cart screen
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -16,11 +16,12 @@ import CartScreen from './src/screens/CartScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SearchScreen from './src/screens/SearchScreen';
 import NotificationScreen from './src/screens/NotificationScreen';
+import LoginScreen from './src/screens/LoginScreen';
 
 // Services
 import DatabaseService from './src/services/DatabaseService';
 import { CartProvider } from './src/context/CartContext';
-import { AuthProvider } from './src/context/AuthContext';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 
 const Tab = createBottomTabNavigator();
@@ -43,7 +44,6 @@ function HomeStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="Home" component={HomeScreen} />
       <Stack.Screen name="Search" component={SearchScreen} />
-      <Stack.Screen name="Cart" component={CartScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
     </Stack.Navigator>
   );
@@ -112,8 +112,31 @@ function TabNavigator() {
   );
 }
 
-// Main stack navigator that contains tabs and modal screens
-function MainStackNavigator() {
+// Main stack navigator that contains both auth and main app
+function AppNavigator() {
+  const { user, loading, initialized } = useAuth();
+
+  if (!initialized || loading) {
+    return (
+      <View style={{ 
+        flex: 1, 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        backgroundColor: theme.colors.background 
+      }}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={{ 
+          marginTop: 16, 
+          fontSize: 16, 
+          color: '#666',
+          fontWeight: '500' 
+        }}>
+          Loading...
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <Stack.Navigator 
       screenOptions={{ 
@@ -121,14 +144,29 @@ function MainStackNavigator() {
         presentation: 'card'
       }}
     >
-      <Stack.Screen name="MainTabs" component={TabNavigator} />
-      <Stack.Screen 
-        name="Product" 
-        component={ProductDetailsScreen}
-        options={{
-          presentation: 'card',
-        }}
-      />
+      {user ? (
+        // User is signed in - show main app
+        <>
+          <Stack.Screen name="MainTabs" component={TabNavigator} />
+          <Stack.Screen 
+            name="Product" 
+            component={ProductDetailsScreen}
+            options={{
+              presentation: 'card',
+            }}
+          />
+          <Stack.Screen 
+            name="Cart" 
+            component={CartScreen}
+            options={{
+              presentation: 'card',
+            }}
+          />
+        </>
+      ) : (
+        // User is not signed in - show login
+        <Stack.Screen name="Login" component={LoginScreen} />
+      )}
     </Stack.Navigator>
   );
 }
@@ -251,7 +289,7 @@ export default function App() {
           <CartProvider>
             <NavigationContainer>
               <StatusBar style="dark" />
-              <MainStackNavigator />
+              <AppNavigator />
             </NavigationContainer>
           </CartProvider>
         </NotificationProvider>

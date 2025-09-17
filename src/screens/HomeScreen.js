@@ -1,4 +1,4 @@
-// src/screens/HomeScreen.js - Fixed infinite loading and added animated banner
+// src/screens/HomeScreen.js - Enhanced with lazy loading for browse section
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -18,9 +18,9 @@ import { Image } from 'expo-image';
 import { useFocusEffect } from '@react-navigation/native';
 
 import SupabaseProductService from '../services/SupabaseProductService';
-import DatabaseService from '../services/DatabaseService';
+import SupabaseBannerService from '../services/SupabaseBannerService';
 import AutoDSService from '../services/AutoDSService';
-import BannerCarousel from '../components/BannerCarousel';
+import AnimatedBannerCarousel from '../components/AnimatedBannerCarousel';
 import { useCart } from '../context/CartContext';
 import { useNotifications } from '../context/NotificationContext';
 
@@ -31,7 +31,14 @@ export default function HomeScreen({ navigation }) {
   const [featuredProducts, setFeaturedProducts] = useState([]);
   const [hotSales, setHotSales] = useState([]);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
-  const [banners, setBanners] = useState([]);
+  
+  // Separate state for different banner positions
+  const [mainBanners, setMainBanners] = useState([]); // Top carousel banners
+  const [middleBanners, setMiddleBanners] = useState([]); // Middle section banners
+  const [bottomBanners, setBottomBanners] = useState([]); // Bottom section banners
+  const [gridBanners, setGridBanners] = useState([]); // New: 2-column grid banners
+  const [singleBanners, setSingleBanners] = useState({}); // Individual positioned banners
+  
   const [browseProducts, setBrowseProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,42 +46,15 @@ export default function HomeScreen({ navigation }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMoreProducts, setHasMoreProducts] = useState(true);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [bannerError, setBannerError] = useState(false);
+  
+  // New states for lazy loading
+  const [shouldLoadBrowseProducts, setShouldLoadBrowseProducts] = useState(false);
+  const [browseProductsLoaded, setBrowseProductsLoaded] = useState(false);
   
   const { getCartItemsCount } = useCart();
   const { unreadCount } = useNotifications();
 
-  // Sample banner data - replace with your actual data
-  const sampleBanners = [
-    {
-      id: 1,
-      title: "Flash Sale",
-      subtitle: "Up to 70% OFF",
-      image: "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=800&h=400&fit=crop",
-      text_color: "white",
-      action_type: "category",
-      action_value: "electronics"
-    },
-    {
-      id: 2,
-      title: "New Arrivals",
-      subtitle: "Discover Latest Fashion",
-      image: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop",
-      text_color: "white",
-      action_type: "category",
-      action_value: "fashion"
-    },
-    {
-      id: 3,
-      title: "Best Deals",
-      subtitle: "Limited Time Offer",
-      image: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=800&h=400&fit=crop",
-      text_color: "white",
-      action_type: "category",
-      action_value: "home"
-    }
-  ];
-
-  // Use useFocusEffect to reload data when screen comes into focus
   useFocusEffect(
     useCallback(() => {
       console.log('🔄 Screen focused, loading data...');
@@ -90,74 +70,10 @@ export default function HomeScreen({ navigation }) {
       
       console.log('📊 Starting data load...', { isRefresh });
       
-      // Always load banners first since they're quick
-      await loadBanners();
-      
-      // Try to load from Supabase
-      try {
-        console.log('🔍 Attempting to load from Supabase...');
-        
-        const [featuredData, hotSalesData, recentlyViewedData, browseData] = await Promise.allSettled([
-          SupabaseProductService.getFeaturedProducts(10),
-          SupabaseProductService.getHotSales(10),
-          SupabaseProductService.getRecentlyViewed(10),
-          SupabaseProductService.getProducts({ page: 1, limit: 20 })
-        ]);
-
-        // Handle fulfilled promises
-        const featured = featuredData.status === 'fulfilled' ? featuredData.value : [];
-        const hotSales = hotSalesData.status === 'fulfilled' ? hotSalesData.value : [];
-        const recentViewed = recentlyViewedData.status === 'fulfilled' ? recentlyViewedData.value : [];
-        const browse = browseData.status === 'fulfilled' ? browseData.value : { products: [], pagination: { hasMore: false } };
-
-        console.log('✅ Supabase data received:', {
-          featured: featured.length,
-          hotSales: hotSales.length,
-          recentViewed: recentViewed.length,
-          browse: browse.products?.length || 0,
-          browsePagination: browse.pagination
-        });
-
-        // Set the data even if some are empty
-        setFeaturedProducts(featured || []);
-        setHotSales(hotSales || []);
-        setRecentlyViewed(recentViewed || []);
-        setBrowseProducts(browse.products || []);
-        setHasMoreProducts(browse.pagination?.hasMore || false);
-        setCurrentPage(1);
-        setDataLoaded(true);
-        
-        console.log('✅ Data successfully loaded from Supabase');
-        
-      } catch (supabaseError) {
-        console.error('❌ Supabase connection failed:', supabaseError);
-        
-        // Try fallback to local data or AutoDS
-        try {
-          console.log('🔄 Trying fallback data sources...');
-          
-          // Try AutoDS as fallback
-          const fallbackData = await AutoDSService.getProducts({ page: 1, limit: 20 });
-          if (fallbackData && fallbackData.length > 0) {
-            console.log('📱 Using AutoDS fallback data');
-            setBrowseProducts(fallbackData);
-            setFeaturedProducts(fallbackData.slice(0, 10));
-            setHotSales(fallbackData.slice(5, 15));
-            setDataLoaded(true);
-          } else {
-            console.log('📱 No fallback data available');
-            // Set empty arrays but mark as loaded to show empty state
-            setFeaturedProducts([]);
-            setHotSales([]);
-            setBrowseProducts([]);
-            setRecentlyViewed([]);
-            setDataLoaded(true);
-          }
-        } catch (fallbackError) {
-          console.error('❌ Fallback data loading failed:', fallbackError);
-          setDataLoaded(true);
-        }
-      }
+      await Promise.all([
+        loadBanners(isRefresh),
+        loadMainProducts(isRefresh) // Load only main products initially
+      ]);
       
     } catch (error) {
       console.error('❌ Error loading home data:', error);
@@ -166,7 +82,7 @@ export default function HomeScreen({ navigation }) {
       if (!isRefresh) {
         Alert.alert(
           'Connection Issue', 
-          'Unable to load products. Please check your internet connection and try again.',
+          'Unable to load some content. Please check your internet connection and try again.',
           [
             { text: 'Retry', onPress: () => loadHomeData() },
             { text: 'OK', style: 'cancel' }
@@ -181,56 +97,203 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  const loadBanners = async () => {
+  const loadBanners = async (isRefresh = false) => {
     try {
-      console.log('🎨 Loading banners...');
-      const localBanners = await DatabaseService.getBanners();
-      if (localBanners && localBanners.length > 0) {
-        setBanners(localBanners);
-        console.log(`✅ Loaded ${localBanners.length} banners from database`);
+      console.log('🎨 Loading banners from Supabase...', { isRefresh });
+      setBannerError(false);
+      
+      let bannersData;
+      
+      if (isRefresh) {
+        bannersData = await SupabaseBannerService.refreshBanners();
       } else {
-        setBanners(sampleBanners);
-        console.log('✅ Using sample banners');
+        bannersData = await SupabaseBannerService.getBanners();
       }
-    } catch (bannerError) {
-      console.error('❌ Banner loading error:', bannerError);
-      setBanners(sampleBanners);
-      console.log('✅ Using sample banners due to error');
-    }
-  };
-  
-  const loadMoreProducts = async () => {
-    // Add better checks to prevent aggressive loading
-    if (loadingMore || !hasMoreProducts || !dataLoaded) {
-      console.log('🚫 Skipping load more:', { loadingMore, hasMoreProducts, dataLoaded });
-      return;
-    }
-    
-    try {
-      setLoadingMore(true);
-      const nextPage = currentPage + 1;
-      console.log(`📄 Loading page ${nextPage}...`);
       
-      const moreData = await SupabaseProductService.getProducts({ 
-        page: nextPage, 
-        limit: 20 
-      });
-      
-      if (moreData.products && moreData.products.length > 0) {
-        setBrowseProducts(prev => [...prev, ...moreData.products]);
-        setHasMoreProducts(moreData.pagination.hasMore);
-        setCurrentPage(nextPage);
-        console.log(`✅ Loaded ${moreData.products.length} more products`);
+      if (bannersData && bannersData.length > 0) {
+        // Organize banners by their intended position
+        organizeBannersByPosition(bannersData);
+        console.log(`✅ Successfully loaded ${bannersData.length} banners from Supabase`);
       } else {
-        setHasMoreProducts(false);
-        console.log('📄 No more products available');
+        console.warn('⚠️ No banners found in Supabase');
+        // Set empty arrays for all banner sections
+        setMainBanners([]);
+        setMiddleBanners([]);
+        setBottomBanners([]);
+        setGridBanners([]);
+        setSingleBanners({});
+        setBannerError(true);
       }
       
     } catch (error) {
-      console.error('❌ Error loading more products:', error);
-      setHasMoreProducts(false);
+      console.error('❌ Error loading banners:', error);
+      setBannerError(true);
+      
+      // Set empty arrays for all banner sections on error
+      setMainBanners([]);
+      setMiddleBanners([]);
+      setBottomBanners([]);
+      setGridBanners([]);
+      setSingleBanners({});
+      console.log('📱 Set all banner sections to empty due to error');
+    }
+  };
+
+  const organizeBannersByPosition = (banners) => {
+    // Sort banners by display_order first
+    const sortedBanners = banners.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+    
+    // Organize banners by position using display_order ranges:
+    // 0-99: Main carousel (top)
+    // 100-199: Middle section banners
+    // 200-299: Bottom section banners
+    // 300-399: Grid banners (2-column layout)
+    // 1000+: Specific positioned banners
+    
+    const main = [];
+    const middle = [];
+    const bottom = [];
+    const grid = [];
+    const single = {};
+    
+    sortedBanners.forEach(banner => {
+      const order = banner.display_order || 0;
+      
+      if (order >= 0 && order < 100) {
+        // Main carousel banners (position 0-99)
+        main.push(banner);
+      } else if (order >= 100 && order < 200) {
+        // Middle section banners (position 100-199)
+        middle.push(banner);
+      } else if (order >= 200 && order < 300) {
+        // Bottom section banners (position 200-299)
+        bottom.push(banner);
+      } else if (order >= 300 && order < 400) {
+        // Grid banners (position 300-399)
+        grid.push(banner);
+      } else if (order >= 1000) {
+        // Specific positioned banners (1000+)
+        // Use the exact order number as the key
+        single[order] = banner;
+      }
+    });
+    
+    // If no grid banners from Supabase, set empty array
+    const gridBannersToUse = grid;
+    
+    setMainBanners(main);
+    setMiddleBanners(middle);
+    setBottomBanners(bottom);
+    setGridBanners(gridBannersToUse);
+    setSingleBanners(single);
+    
+    console.log('📍 Banners organized by position:', {
+      main: main.length,
+      middle: middle.length,
+      bottom: bottom.length,
+      grid: gridBannersToUse.length,
+      single: Object.keys(single).length
+    });
+  };
+
+  // Load main products (featured, hot sales, recently viewed) - called on initial load
+  const loadMainProducts = async (isRefresh = false) => {
+    try {
+      console.log('🔍 Loading main products from Supabase...');
+      
+      const [featuredData, hotSalesData, recentlyViewedData] = await Promise.allSettled([
+        SupabaseProductService.getFeaturedProducts(10),
+        SupabaseProductService.getHotSales(10),
+        SupabaseProductService.getRecentlyViewed(10)
+      ]);
+
+      const featured = featuredData.status === 'fulfilled' ? featuredData.value : [];
+      const hotSales = hotSalesData.status === 'fulfilled' ? hotSalesData.value : [];
+      const recentViewed = recentlyViewedData.status === 'fulfilled' ? recentlyViewedData.value : [];
+
+      console.log('✅ Main products received:', {
+        featured: featured.length,
+        hotSales: hotSales.length,
+        recentViewed: recentViewed.length,
+      });
+
+      setFeaturedProducts(featured || []);
+      setHotSales(hotSales || []);
+      setRecentlyViewed(recentViewed || []);
+      setDataLoaded(true);
+      
+    } catch (error) {
+      console.error('❌ Main product loading failed:', error);
+      setDataLoaded(true);
+    }
+  };
+
+  // Load browse products - called when user scrolls to browse section
+  const loadBrowseProducts = async (isInitial = true) => {
+    if (!isInitial && (loadingMore || !hasMoreProducts)) return;
+    
+    try {
+      if (isInitial) {
+        setBrowseProductsLoaded(false);
+        setCurrentPage(1);
+      } else {
+        setLoadingMore(true);
+      }
+      
+      const page = isInitial ? 1 : currentPage + 1;
+      console.log(`🔍 Loading browse products page ${page}...`);
+      
+      const browse = await SupabaseProductService.getProducts({ 
+        page, 
+        limit: 20 
+      });
+
+      console.log('✅ Browse products received:', {
+        browse: browse.products?.length || 0,
+        page: page,
+        hasMore: browse.pagination?.hasMore || false
+      });
+
+      if (isInitial) {
+        setBrowseProducts(browse.products || []);
+        setBrowseProductsLoaded(true);
+      } else {
+        setBrowseProducts(prev => [...prev, ...browse.products]);
+        setCurrentPage(page);
+      }
+      
+      setHasMoreProducts(browse.pagination?.hasMore || false);
+      
+    } catch (error) {
+      console.error('❌ Browse products loading failed:', error);
+      if (isInitial) {
+        setBrowseProductsLoaded(true);
+      }
     } finally {
-      setLoadingMore(false);
+      if (!isInitial) {
+        setLoadingMore(false);
+      }
+    }
+  };
+
+  // Handle scroll event to trigger browse products loading
+  const handleScroll = (event) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const paddingToBottom = 1200; // Start loading when user is 1200px from bottom
+    
+    // Check if user scrolled close to bottom and browse products haven't been loaded yet
+    if (contentOffset.y + layoutMeasurement.height + paddingToBottom >= contentSize.height) {
+      if (!shouldLoadBrowseProducts && !browseProductsLoaded) {
+        console.log('📜 User scrolled near browse section, loading products...');
+        setShouldLoadBrowseProducts(true);
+        loadBrowseProducts(true);
+      }
+    }
+  };
+
+  const loadMoreProducts = () => {
+    if (browseProductsLoaded && hasMoreProducts && !loadingMore) {
+      loadBrowseProducts(false);
     }
   };
 
@@ -238,35 +301,47 @@ export default function HomeScreen({ navigation }) {
     console.log('🔄 Manual refresh triggered...');
     setRefreshing(true);
     
-    // Clear any cached data
     if (SupabaseProductService.clearCache) {
       SupabaseProductService.clearCache();
     }
+    SupabaseBannerService.clearCache();
     
-    // Reset pagination
+    // Reset browse products state
+    setShouldLoadBrowseProducts(false);
+    setBrowseProductsLoaded(false);
+    setBrowseProducts([]);
     setCurrentPage(1);
     setHasMoreProducts(true);
     
-    // Reload all data
     await loadHomeData(true);
   }, []);
 
-  const handleSearch = async () => {
-    if (searchQuery.trim()) {
-      navigation.navigate('Search', { query: searchQuery.trim() });
+  const handleBannerPress = async (banner) => {
+    console.log('🎨 Banner pressed:', banner);
+    
+    try {
+      if (SupabaseBannerService.addToRecentlyViewedBanners) {
+        await SupabaseBannerService.addToRecentlyViewedBanners(banner);
+      }
+    } catch (error) {
+      console.error('Error adding banner to recently viewed:', error);
+    }
+    
+    try {
+      if (banner.action_type === 'category') {
+        navigation.navigate('Search', { query: banner.action_value });
+      } else if (banner.action_type === 'product') {
+        navigation.navigate('Product', { productId: banner.action_value });
+      } else if (banner.action_type === 'url') {
+        console.log('External URL:', banner.action_value);
+      }
+    } catch (navError) {
+      console.error('Navigation error:', navError);
+      Alert.alert('Navigation Error', 'Unable to navigate. Please try again.');
     }
   };
 
   const handleProductPress = async (product) => {
-    console.log('🔍 Product pressed:', {
-      autods_id: product.autods_id,
-      id: product.id,
-      title: product.title,
-      price: product.price,
-      hasImages: !!product.main_picture_url
-    });
-
-    // Add to recently viewed
     try {
       await SupabaseProductService.addToRecentlyViewed(product);
     } catch (error) {
@@ -279,14 +354,9 @@ export default function HomeScreen({ navigation }) {
     });
   };
 
-  const handleBannerPress = (banner) => {
-    console.log('🎨 Banner pressed:', banner);
-    if (banner.action_type === 'category') {
-      navigation.navigate('Search', { category: banner.action_value });
-    } else if (banner.action_type === 'product') {
-      navigation.navigate('Product', { productId: banner.action_value });
-    } else if (banner.action_type === 'url') {
-      console.log('External URL:', banner.action_value);
+  const handleSearch = async () => {
+    if (searchQuery.trim()) {
+      navigation.navigate('Search', { query: searchQuery.trim() });
     }
   };
 
@@ -294,13 +364,67 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('Notifications');
   };
 
-  // Mock categories
-  const mockCategories = [
-    { name: 'Technology', color: '#666' },
-    { name: 'Fashion', color: '#666' },
-    { name: 'Sports', color: '#666' },
-    { name: 'Supermarket', color: '#666' },
-  ];
+  // Render a single banner at specific position
+  const renderSingleBanner = (position) => {
+    const banner = singleBanners[position];
+    if (!banner) return null;
+    
+    return (
+      <View style={styles.singleBannerContainer}>
+        <TouchableOpacity
+          style={styles.singleBanner}
+          onPress={() => handleBannerPress(banner)}
+          activeOpacity={0.9}
+        >
+          <Image
+            source={{ uri: banner.image }}
+            style={styles.singleBannerImage}
+            contentFit="cover"
+          />
+          <View style={styles.singleBannerGradient} />
+          <View style={styles.singleBannerTextContainer}>
+            <Text style={[styles.singleBannerTitle, { color: banner.text_color || 'white' }]}>
+              {banner.title}
+            </Text>
+            {banner.subtitle && (
+              <Text style={[styles.singleBannerSubtitle, { color: banner.text_color || 'white' }]}>
+                {banner.subtitle}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // Render 2-column grid banner
+  const renderGridBanner = ({ item: banner, index }) => (
+    <TouchableOpacity
+      style={[
+        styles.gridBannerCard,
+        index % 2 === 0 ? styles.gridBannerLeft : styles.gridBannerRight
+      ]}
+      onPress={() => handleBannerPress(banner)}
+      activeOpacity={0.9}
+    >
+      <Image
+        source={{ uri: banner.image }}
+        style={styles.gridBannerImage}
+        contentFit="cover"
+      />
+      <View style={styles.gridBannerGradient} />
+      <View style={styles.gridBannerTextContainer}>
+        <Text style={[styles.gridBannerTitle, { color: banner.text_color || 'white' }]}>
+          {banner.title}
+        </Text>
+        {banner.subtitle && (
+          <Text style={[styles.gridBannerSubtitle, { color: banner.text_color || 'white' }]}>
+            {banner.subtitle}
+          </Text>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
 
   const renderProductCard = ({ item: product, index }) => (
     <TouchableOpacity
@@ -318,7 +442,6 @@ export default function HomeScreen({ navigation }) {
           }}
           style={styles.productCardImage}
           contentFit="cover"
-          placeholder={{ uri: 'https://via.placeholder.com/400x300/f0f0f0/999999?text=Loading...' }}
         />
       </View>
       
@@ -332,11 +455,6 @@ export default function HomeScreen({ navigation }) {
         <Text style={styles.freeShippingText}>
           {(product.shipping_price === 0 || !product.shipping_price) ? 'Free shipping' : `Shipping: $${product.shipping_price}`}
         </Text>
-        {product.quantity > 0 && (
-          <Text style={styles.stockText}>
-            {product.quantity} in stock
-          </Text>
-        )}
       </View>
     </TouchableOpacity>
   );
@@ -353,7 +471,6 @@ export default function HomeScreen({ navigation }) {
           }}
           style={styles.browseProductImage}
           contentFit="cover"
-          placeholder={{ uri: 'https://via.placeholder.com/400x300/f0f0f0/999999?text=Loading...' }}
         />
       </View>
       
@@ -371,18 +488,62 @@ export default function HomeScreen({ navigation }) {
     </TouchableOpacity>
   );
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyStateContainer}>
-      <Ionicons name="cube-outline" size={64} color="#ccc" />
-      <Text style={styles.emptyStateTitle}>No Products Available</Text>
-      <Text style={styles.emptyStateMessage}>
-        We're having trouble loading products right now. Please try refreshing or check back later.
-      </Text>
-      <TouchableOpacity style={styles.retryButton} onPress={() => loadHomeData()}>
-        <Text style={styles.retryButtonText}>Try Again</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  // Render browse section with lazy loading
+  const renderBrowseSection = () => {
+    if (!shouldLoadBrowseProducts && !browseProductsLoaded) {
+      // Show placeholder when not loaded yet
+      return (
+        <View style={styles.browseMoreSection}>
+          <Text style={styles.browseMoreTitle}>Browse more products</Text>
+          <View style={styles.browsePlaceholder}>
+            <ActivityIndicator size="small" color="#E53E3E" />
+            <Text style={styles.browsePlaceholderText}>Scroll to load more products...</Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (!browseProductsLoaded) {
+      // Show loading state
+      return (
+        <View style={styles.browseMoreSection}>
+          <Text style={styles.browseMoreTitle}>Browse more products</Text>
+          <View style={styles.browseLoadingContainer}>
+            <ActivityIndicator size="large" color="#E53E3E" />
+            <Text style={styles.loadingMoreText}>Loading products...</Text>
+          </View>
+        </View>
+      );
+    }
+
+    // Show products when loaded
+    return (
+      <View style={styles.browseMoreSection}>
+        <Text style={styles.browseMoreTitle}>Browse more products</Text>
+        
+        <FlatList
+          data={browseProducts}
+          renderItem={renderBrowseProductCard}
+          keyExtractor={(item, index) => `browse-${item.autods_id || item.id || index}-${item.title?.slice(0,10) || index}`}
+          numColumns={2}
+          scrollEnabled={false}
+          columnWrapperStyle={styles.browseRow}
+          removeClippedSubviews={true}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          ListFooterComponent={() => 
+            loadingMore && hasMoreProducts ? (
+              <View style={styles.loadingMoreContainer}>
+                <ActivityIndicator size="small" color="#E53E3E" />
+                <Text style={styles.loadingMoreText}>Loading more...</Text>
+              </View>
+            ) : null
+          }
+        />
+      </View>
+    );
+  };
 
   if (loading && !dataLoaded) {
     return (
@@ -404,7 +565,6 @@ export default function HomeScreen({ navigation }) {
             contentFit="contain"
           />
           <View style={styles.rightColumn}>
-            {/* Search Bar */}
             <View style={styles.searchContainer}>
               <Ionicons name="search" size={18} color="#999" style={styles.searchIcon} />
               <TextInput
@@ -417,7 +577,6 @@ export default function HomeScreen({ navigation }) {
               />
             </View>
             
-            {/* Notification */}
             <TouchableOpacity 
               style={styles.notificationButton}
               onPress={handleNotificationPress}
@@ -432,7 +591,6 @@ export default function HomeScreen({ navigation }) {
               )}
             </TouchableOpacity>
             
-            {/* Cart */}
             <TouchableOpacity 
               style={styles.cartButton}
               onPress={() => navigation.navigate('Cart')}
@@ -451,6 +609,8 @@ export default function HomeScreen({ navigation }) {
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={400}
         refreshControl={
           <RefreshControl 
             refreshing={refreshing} 
@@ -460,133 +620,141 @@ export default function HomeScreen({ navigation }) {
           />
         }
       >
-        {/* Main Banner Carousel */}
-        {banners.length > 0 && (
-          <BannerCarousel
-            banners={banners}
-            onBannerPress={handleBannerPress}
-            style={styles.mainBannerSection}
-            autoSlide={true}
-            slideInterval={4000}
-          />
+        {/* 1st Banner Position: Main Carousel (display_order 0-99) */}
+        {mainBanners.length > 0 && (
+          <View>
+            <AnimatedBannerCarousel
+              banners={mainBanners}
+              onBannerPress={handleBannerPress}
+              height={220}
+              autoSlide={mainBanners.length > 1}
+              slideInterval={4000}
+              showPagination={mainBanners.length > 1}
+              showGradient={true}
+              borderRadius={12}
+              style={styles.mainBannerSection}
+            />
+            {bannerError && (
+              <View style={styles.bannerErrorContainer}>
+                <Text style={styles.bannerErrorText}>
+                  Banners may not be up to date. Pull to refresh for latest content.
+                </Text>
+              </View>
+            )}
+          </View>
         )}
 
-        {/* Categories */}
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoriesContainer}
-        >
-          {mockCategories.map((category, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.categoryPill}
-              onPress={() => {/* Handle category press */}}
-            >
-              <Text style={styles.categoryText}>{category.name}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Specific Banner Position 1001 */}
+        {renderSingleBanner(1001)}
 
-        {/* Check if we have any data to show */}
-        {dataLoaded && featuredProducts.length === 0 && hotSales.length === 0 && browseProducts.length === 0 ? (
-          renderEmptyState()
-        ) : (
-          <>
-            {/* Hot Sales */}
-            {hotSales.length > 0 && (
-              <View style={styles.hotSalesSection}>
-                <View style={styles.hotSalesHeader}>
-                  <Text style={styles.hotSalesTitle}>Hot sales</Text>
-                  <View style={styles.pagination}>
-                    <View style={[styles.paginationDot, styles.activeDot]} />
-                    <View style={styles.paginationDot} />
-                    <View style={styles.paginationDot} />
-                    <View style={styles.paginationDot} />
-                  </View>
-                </View>
-
-                <FlatList
-                  data={hotSales}
-                  renderItem={renderProductCard}
-                  keyExtractor={(item, index) => item.autods_id || item.id || `hot-${index}`}
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.productsScrollContainer}
-                />
-              </View>
-            )}
-
-            {/* Animated Banner above Recently Viewed */}
-            {recentlyViewed.length > 0 && banners.length > 1 && (
-              <View style={styles.animatedBannerSection}>
-                <BannerCarousel
-                  banners={banners.slice(1)} // Use remaining banners
-                  onBannerPress={handleBannerPress}
-                  style={styles.animatedBannerStyle}
-                  autoSlide={true}
-                  slideInterval={3000}
-                  showPagination={true}
-                />
-              </View>
-            )}
-
-            {/* Recently Viewed Section */}
-            {recentlyViewed.length > 0 && (
-              <View style={styles.recentlyViewedSection}>
-                <Text style={styles.recentlyViewedTitle}>Recently viewed</Text>
-                
-                <View style={styles.recentlyViewedContainer}>
-                  {recentlyViewed.slice(0, 2).map((item, index) => (
-                    <TouchableOpacity
-                      key={item.autods_id || item.id || `recent-${index}`}
-                      style={styles.recentlyViewedCard}
-                      onPress={() => handleProductPress(item)}
-                    >
-                      <TouchableOpacity style={styles.heartButton}>
-                        <Ionicons name="heart-outline" size={20} color="#FF6B6B" />
-                      </TouchableOpacity>
-                      <Image
-                        source={{ 
-                          uri: item.main_picture_url || item.image_url || 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=400&h=300&fit=crop' 
-                        }}
-                        style={styles.recentlyViewedImage}
-                        contentFit="cover"
-                        placeholder={{ uri: 'https://via.placeholder.com/400x300/f0f0f0/999999?text=Loading...' }}
-                      />
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* Browse More Products */}
-            {browseProducts.length > 0 && (
-              <View style={styles.browseMoreSection}>
-                <Text style={styles.browseMoreTitle}>Browse more products</Text>
-                
-                <FlatList
-                  data={browseProducts}
-                  renderItem={renderBrowseProductCard}
-                  keyExtractor={(item, index) => item.autods_id || item.id || `browse-${index}`}
-                  numColumns={2}
-                  scrollEnabled={false}
-                  columnWrapperStyle={styles.browseRow}
-                  onEndReached={loadMoreProducts}
-                  onEndReachedThreshold={0.5} // Changed from 0.1 to 0.5 to be less aggressive
-                  ListFooterComponent={() => 
-                    loadingMore && hasMoreProducts ? (
-                      <View style={styles.loadingMoreContainer}>
-                        <ActivityIndicator size="small" color="#E53E3E" />
-                        <Text style={styles.loadingMoreText}>Loading more...</Text>
-                      </View>
-                    ) : null
-                  }
-                />
-              </View>
-            )}
-          </>
+        {/* NEW: 2-Column Grid Banner Section (display_order 300-399) */}
+        {gridBanners.length > 0 && (
+          <View style={styles.gridBannerSection}>
+            <View style={styles.gridBannerHeader}>
+              <Text style={styles.gridBannerSectionTitle}>Shop by Category</Text>
+            </View>
+            
+            <FlatList
+              data={gridBanners}
+              renderItem={renderGridBanner}
+              keyExtractor={(item, index) => `grid-${item.id || item.autods_id || index}-${item.display_order || index}`}
+              numColumns={2}
+              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.gridBannerContainer}
+            />
+          </View>
         )}
+
+        {/* Hot Sales */}
+        {hotSales.length > 0 && (
+          <View style={styles.hotSalesSection}>
+            <View style={styles.hotSalesHeader}>
+              <Text style={styles.hotSalesTitle}>Hot sales</Text>
+            </View>
+
+            <FlatList
+              data={hotSales}
+              renderItem={renderProductCard}
+              keyExtractor={(item, index) => `hot-${item.autods_id || item.id || index}-${Date.now()}`}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.productsScrollContainer}
+            />
+          </View>
+        )}
+
+        {/* 2nd Banner Position: Middle Section (display_order 100-199) */}
+        {middleBanners.length > 0 && (
+          <View style={styles.middleBannerSection}>
+            <AnimatedBannerCarousel
+              banners={middleBanners}
+              onBannerPress={handleBannerPress}
+              height={180}
+              autoSlide={true}
+              slideInterval={5000}
+              showPagination={middleBanners.length > 1}
+              showGradient={true}
+              borderRadius={12}
+            />
+          </View>
+        )}
+
+        {/* Specific Banner Position 1002 */}
+        {renderSingleBanner(1002)}
+
+        {/* Recently Viewed Section */}
+        {recentlyViewed.length > 0 && (
+          <View style={styles.recentlyViewedSection}>
+            <Text style={styles.recentlyViewedTitle}>Recently viewed</Text>
+            
+            <View style={styles.recentlyViewedContainer}>
+              {recentlyViewed.slice(0, 2).map((item, index) => (
+                <TouchableOpacity
+                  key={`recent-${item.autods_id || item.id || index}-${item.title?.slice(0,5) || Math.random()}`}
+                  style={styles.recentlyViewedCard}
+                  onPress={() => handleProductPress(item)}
+                >
+                  <TouchableOpacity style={styles.heartButton}>
+                    <Ionicons name="heart-outline" size={20} color="#FF6B6B" />
+                  </TouchableOpacity>
+                  <Image
+                    source={{ 
+                      uri: item.main_picture_url || item.image_url || 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=400&h=300&fit=crop' 
+                    }}
+                    style={styles.recentlyViewedImage}
+                    contentFit="cover"
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Specific Banner Position 1003 */}
+        {renderSingleBanner(1003)}
+
+        {/* Browse More Products - With Lazy Loading */}
+        {renderBrowseSection()}
+
+        {/* 3rd Banner Position: Bottom Section (display_order 200-299) */}
+        {bottomBanners.length > 0 && (
+          <View style={styles.bottomBannerSection}>
+            <AnimatedBannerCarousel
+              banners={bottomBanners}
+              onBannerPress={handleBannerPress}
+              height={160}
+              autoSlide={true}
+              slideInterval={6000}
+              showPagination={bottomBanners.length > 1}
+              showGradient={true}
+              borderRadius={12}
+            />
+          </View>
+        )}
+
+        {/* Specific Banner Position 1004 */}
+        {renderSingleBanner(1004)}
 
         <View style={styles.bottomSpacing} />
       </ScrollView>
@@ -692,25 +860,140 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   mainBannerSection: {
+    marginTop: 16,
+  },
+  middleBannerSection: {
     marginVertical: 16,
   },
-  categoriesContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
+  bottomBannerSection: {
+    marginVertical: 16,
   },
-  categoryPill: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    backgroundColor: 'white',
+  singleBannerContainer: {
+    marginHorizontal: 16,
+    marginVertical: 8,
   },
-  categoryText: {
-    color: '#666',
+  singleBanner: {
+    height: 150,
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  singleBannerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  singleBannerGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  singleBannerTextContainer: {
+    position: 'absolute',
+    bottom: 16,
+    left: 16,
+    right: 16,
+  },
+  singleBannerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 4,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  singleBannerSubtitle: {
     fontSize: 14,
     fontWeight: '500',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  // Grid Banner Styles
+  gridBannerSection: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: 'white',
+    marginVertical: 8,
+  },
+  gridBannerHeader: {
+    marginBottom: 16,
+  },
+  gridBannerSectionTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  gridBannerContainer: {
+    paddingHorizontal: 0,
+  },
+  gridBannerCard: {
+    height: 140,
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  gridBannerLeft: {
+    width: (width - 44) / 2,
+    marginRight: 6,
+  },
+  gridBannerRight: {
+    width: (width - 44) / 2,
+    marginLeft: 6,
+  },
+  gridBannerImage: {
+    width: '100%',
+    height: '100%',
+  },
+  gridBannerGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  gridBannerTextContainer: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+  },
+  gridBannerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 2,
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  gridBannerSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+  },
+  bannerErrorContainer: {
+    backgroundColor: '#FFF3CD',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    borderRadius: 4,
+    marginTop: -8,
+  },
+  bannerErrorText: {
+    color: '#856404',
+    fontSize: 12,
+    textAlign: 'center',
   },
   hotSalesSection: {
     paddingVertical: 8,
@@ -727,22 +1010,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333',
   },
-  pagination: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  paginationDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#E0E0E0',
-  },
-  activeDot: {
-    backgroundColor: '#FF9800',
-    width: 20,
-  },
   productsScrollContainer: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
   },
   productCard: {
     backgroundColor: 'white',
@@ -788,18 +1057,6 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontWeight: '600',
     marginBottom: 2,
-  },
-  stockText: {
-    fontSize: 10,
-    color: '#999',
-  },
-  animatedBannerSection: {
-    marginVertical: 16,
-    paddingHorizontal: 16,
-  },
-  animatedBannerStyle: {
-    borderRadius: 12,
-    overflow: 'hidden',
   },
   recentlyViewedSection: {
     paddingHorizontal: 16,
@@ -902,6 +1159,20 @@ const styles = StyleSheet.create({
     color: '#4CAF50',
     fontWeight: '600',
   },
+  browsePlaceholder: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
+  browsePlaceholderText: {
+    color: '#666',
+    fontSize: 16,
+  },
+  browseLoadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    gap: 12,
+  },
   loadingMoreContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -914,39 +1185,6 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 14,
   },
-  emptyStateContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 32,
-  },
-  emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStateMessage: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 24,
-  },
-  retryButton: {
-    backgroundColor: '#E53E3E',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   bottomSpacing: {
     height: 100,
   },
-});

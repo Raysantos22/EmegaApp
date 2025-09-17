@@ -345,18 +345,162 @@ class DatabaseService {
   }
 
   // Banners
-  async getBanners() {
+   static async getBanners() {
     try {
-      const banners = await this.db.getAllAsync(
-        'SELECT * FROM banners WHERE is_active = 1 ORDER BY order_index'
-      );
+      console.log('Fetching banners from API...');
       
-      return banners;
+      // Replace with your actual API endpoint
+      const API_BASE_URL = 'https://your-nextjs-app.vercel.app'; // Update this!
+      
+      const response = await fetch(`${API_BASE_URL}/api/banners?active_only=true`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success && result.banners) {
+        console.log(`✅ Fetched ${result.banners.length} active banners from API`);
+        
+        // Transform API response to match your mobile app format
+        const transformedBanners = result.banners.map(banner => ({
+          id: banner.id,
+          title: banner.title,
+          subtitle: banner.subtitle,
+          image: banner.image_url, // Note: API uses 'image_url', mobile expects 'image'
+          text_color: banner.text_color,
+          action_type: banner.action_type,
+          action_value: banner.action_value,
+          display_order: banner.display_order,
+          is_active: banner.is_active,
+          start_date: banner.start_date,
+          end_date: banner.end_date
+        }));
+
+        // Filter banners by date if they have date restrictions
+        const now = new Date();
+        const activeBanners = transformedBanners.filter(banner => {
+          // Check start date
+          if (banner.start_date) {
+            const startDate = new Date(banner.start_date);
+            if (now < startDate) return false;
+          }
+          
+          // Check end date
+          if (banner.end_date) {
+            const endDate = new Date(banner.end_date);
+            if (now > endDate) return false;
+          }
+          
+          return banner.is_active;
+        });
+
+        // Sort by display_order
+        activeBanners.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+
+        return activeBanners;
+      } else {
+        console.warn('Invalid API response format:', result);
+        return [];
+      }
     } catch (error) {
-      console.error('Get banners error:', error);
-      return [];
+      console.error('Error fetching banners from API:', error);
+      
+      // Return fallback banners if API fails
+      return this.getFallbackBanners();
     }
   }
+static async cacheBanners(banners) {
+    try {
+      const cacheData = {
+        banners: banners,
+        timestamp: Date.now(),
+        expiry: Date.now() + (30 * 60 * 1000) // 30 minutes cache
+      };
+      
+      await AsyncStorage.setItem('cached_banners', JSON.stringify(cacheData));
+      console.log('Banners cached successfully');
+    } catch (error) {
+      console.error('Error caching banners:', error);
+    }
+  }
+
+  // Get banners from cache
+  static async getCachedBanners() {
+    try {
+      const cached = await AsyncStorage.getItem('cached_banners');
+      if (cached) {
+        const cacheData = JSON.parse(cached);
+        
+        // Check if cache is still valid
+        if (Date.now() < cacheData.expiry) {
+          console.log('Using cached banners');
+          return cacheData.banners;
+        } else {
+          console.log('Cache expired, removing old data');
+          await AsyncStorage.removeItem('cached_banners');
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('Error reading cached banners:', error);
+      return null;
+    }
+  }
+
+  // Enhanced getBanners with caching
+  static async getBannersWithCache() {
+    try {
+      // First try to get from cache
+      const cachedBanners = await this.getCachedBanners();
+      if (cachedBanners && cachedBanners.length > 0) {
+        return cachedBanners;
+      }
+
+      // If no cache, fetch from API
+      const banners = await this.getBanners();
+      
+      // Cache the result
+      if (banners && banners.length > 0) {
+        await this.cacheBanners(banners);
+      }
+
+      return banners;
+    } catch (error) {
+      console.error('Error in getBannersWithCache:', error);
+      return this.getFallbackBanners();
+    }
+  }
+
+  // Method to refresh banner cache
+  static async refreshBanners() {
+    try {
+      console.log('Refreshing banner cache...');
+      
+      // Clear existing cache
+      await AsyncStorage.removeItem('cached_banners');
+      
+      // Fetch fresh data
+      const banners = await this.getBanners();
+      
+      // Cache new data
+      if (banners && banners.length > 0) {
+        await this.cacheBanners(banners);
+      }
+
+      return banners;
+    } catch (error) {
+      console.error('Error refreshing banners:', error);
+      return this.getFallbackBanners();
+    }
+  }
+
 
   async createBanner(banner) {
     try {

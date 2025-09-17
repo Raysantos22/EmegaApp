@@ -1,4 +1,4 @@
-// src/screens/SearchScreen.js
+// src/screens/SearchScreen.js - Enhanced with Recently Viewed and Recently Searched
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   FlatList,
+  ScrollView,
   Dimensions,
   ActivityIndicator,
   Alert,
@@ -15,15 +16,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import SupabaseProductService from '../services/SupabaseProductService';
 
 const { width } = Dimensions.get('window');
 
 export default function SearchScreen({ route, navigation }) {
-  const { query: initialQuery = '' } = route.params || {};
+  const { query: initialQuery = '', category: initialCategory = '' } = route.params || {};
   
-  const [searchQuery, setSearchQuery] = useState(initialQuery);
+  const [searchQuery, setSearchQuery] = useState(initialQuery || initialCategory || '');
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -32,6 +34,11 @@ export default function SearchScreen({ route, navigation }) {
   const [totalResults, setTotalResults] = useState(0);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Recently viewed and searched states
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const [recentlySearched, setRecentlySearched] = useState([]);
+  const [showRecentData, setShowRecentData] = useState(true);
 
   // Search filters
   const [sortBy, setSortBy] = useState('modified_at');
@@ -41,18 +48,110 @@ export default function SearchScreen({ route, navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (initialQuery) {
-        performSearch(initialQuery, true);
+      const queryToSearch = initialQuery || initialCategory;
+      if (queryToSearch) {
+        setSearchQuery(queryToSearch);
+        setShowRecentData(false);
+        performSearch(queryToSearch, true);
+        saveRecentSearch(queryToSearch);
+      } else {
+        // Load recent data when no initial query
+        loadRecentData();
       }
-    }, [initialQuery])
+    }, [initialQuery, initialCategory])
   );
+
+  // Load recently viewed and searched data
+  const loadRecentData = async () => {
+    try {
+      const [viewedData, searchedData] = await Promise.all([
+        loadRecentlyViewed(),
+        loadRecentlySearched()
+      ]);
+      
+      setRecentlyViewed(viewedData || []);
+      setRecentlySearched(searchedData || []);
+      setShowRecentData(true);
+    } catch (error) {
+      console.error('Error loading recent data:', error);
+    }
+  };
+
+  // Load recently viewed products
+  const loadRecentlyViewed = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('recentlyViewedProducts');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.slice(0, 10); // Show last 10 viewed items
+      }
+      return [];
+    } catch (error) {
+      console.error('Error loading recently viewed:', error);
+      return [];
+    }
+  };
+
+  // Load recently searched terms
+  const loadRecentlySearched = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('recentlySearched');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return parsed.slice(0, 10); // Show last 10 searches
+      }
+      return [];
+    } catch (error) {
+      console.error('Error loading recently searched:', error);
+      return [];
+    }
+  };
+
+  // Save recent search term
+  const saveRecentSearch = async (query) => {
+    if (!query.trim()) return;
+    
+    try {
+      const stored = await AsyncStorage.getItem('recentlySearched');
+      let searches = stored ? JSON.parse(stored) : [];
+      
+      // Remove if already exists to avoid duplicates
+      searches = searches.filter(item => item.toLowerCase() !== query.toLowerCase());
+      
+      // Add to beginning
+      searches.unshift(query);
+      
+      // Keep only last 50 searches
+      searches = searches.slice(0, 50);
+      
+      await AsyncStorage.setItem('recentlySearched', JSON.stringify(searches));
+      
+      // Update local state
+      setRecentlySearched(searches.slice(0, 10));
+    } catch (error) {
+      console.error('Error saving recent search:', error);
+    }
+  };
+
+  // Clear recent searches
+  const clearRecentSearches = async () => {
+    try {
+      await AsyncStorage.removeItem('recentlySearched');
+      setRecentlySearched([]);
+    } catch (error) {
+      console.error('Error clearing recent searches:', error);
+    }
+  };
 
   const performSearch = async (query, resetPage = false) => {
     if (!query.trim()) {
       setProducts([]);
       setTotalResults(0);
+      setShowRecentData(true);
       return;
     }
+
+    setShowRecentData(false);
 
     try {
       if (resetPage) {
@@ -75,19 +174,19 @@ export default function SearchScreen({ route, navigation }) {
       });
 
       if (resetPage) {
-        setProducts(result.products);
+        setProducts(result.products || []);
       } else {
-        setProducts(prev => [...prev, ...result.products]);
+        setProducts(prev => [...prev, ...(result.products || [])]);
       }
 
-      setTotalResults(result.pagination.total);
-      setHasMore(result.pagination.hasMore);
+      setTotalResults(result.pagination?.total || 0);
+      setHasMore(result.pagination?.hasMore || false);
       setCurrentPage(page);
       setShowSuggestions(false);
 
     } catch (error) {
       console.error('Search error:', error);
-      Alert.alert('Error', 'Failed to search products');
+      Alert.alert('Error', 'Failed to search products. Please try again.');
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -106,6 +205,7 @@ export default function SearchScreen({ route, navigation }) {
 
   const handleSearchSubmit = () => {
     if (searchQuery.trim()) {
+      saveRecentSearch(searchQuery.trim());
       performSearch(searchQuery.trim(), true);
     }
   };
@@ -113,14 +213,26 @@ export default function SearchScreen({ route, navigation }) {
   const handleSearchChange = async (text) => {
     setSearchQuery(text);
     
+    if (!text.trim()) {
+      setShowRecentData(true);
+      setShowSuggestions(false);
+      setProducts([]);
+      setTotalResults(0);
+      return;
+    }
+    
     // Get suggestions
     if (text.length >= 2) {
       try {
-        const suggestionList = await SupabaseProductService.getSearchSuggestions(text, 5);
-        setSuggestions(suggestionList);
-        setShowSuggestions(true);
+        if (SupabaseProductService.getSearchSuggestions) {
+          const suggestionList = await SupabaseProductService.getSearchSuggestions(text, 5);
+          setSuggestions(suggestionList || []);
+          setShowSuggestions(true);
+        }
       } catch (error) {
         console.error('Error getting suggestions:', error);
+        setSuggestions([]);
+        setShowSuggestions(false);
       }
     } else {
       setShowSuggestions(false);
@@ -131,7 +243,26 @@ export default function SearchScreen({ route, navigation }) {
   const handleSuggestionPress = (suggestion) => {
     setSearchQuery(suggestion);
     setShowSuggestions(false);
+    saveRecentSearch(suggestion);
     performSearch(suggestion, true);
+  };
+
+  const handleRecentSearchPress = (searchTerm) => {
+    setSearchQuery(searchTerm);
+    performSearch(searchTerm, true);
+  };
+
+  const handleRecentProductPress = async (product) => {
+    try {
+      await SupabaseProductService.addToRecentlyViewed(product);
+    } catch (error) {
+      console.error('Error adding to recently viewed:', error);
+    }
+    
+    navigation.navigate('Product', { 
+      productId: product.autods_id || product.id,
+      product: product
+    });
   };
 
   const applySortFilter = (newSortBy, newSortOrder) => {
@@ -147,14 +278,14 @@ export default function SearchScreen({ route, navigation }) {
     <TouchableOpacity
       style={styles.productCard}
       onPress={() => navigation.navigate('Product', { 
-        productId: product.autods_id,
+        productId: product.autods_id || product.id,
         product 
       })}
     >
       <View style={styles.productImageContainer}>
         <Image
           source={{ 
-            uri: product.main_picture_url || 'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=400&h=300&fit=crop' 
+            uri: product.main_picture_url || product.image_url || 'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=400&h=300&fit=crop' 
           }}
           style={styles.productImage}
           contentFit="cover"
@@ -163,12 +294,12 @@ export default function SearchScreen({ route, navigation }) {
       
       <View style={styles.productInfo}>
         <Text style={styles.productName} numberOfLines={2}>
-          {product.title}
+          {product.title || product.name}
         </Text>
         <Text style={styles.productPrice}>
-          ${parseFloat(product.price).toLocaleString()}
+          ${parseFloat(product.price || 0).toLocaleString()}
         </Text>
-        {product.shipping_price === 0 && (
+        {(product.shipping_price === 0 || !product.shipping_price) && (
           <Text style={styles.freeShipping}>Free shipping</Text>
         )}
         <View style={styles.productMeta}>
@@ -180,6 +311,44 @@ export default function SearchScreen({ route, navigation }) {
           )}
         </View>
       </View>
+    </TouchableOpacity>
+  );
+
+  const renderRecentlyViewedProduct = ({ item: product }) => (
+    <TouchableOpacity
+      style={styles.recentProductCard}
+      onPress={() => handleRecentProductPress(product)}
+    >
+      <View style={styles.recentProductImage}>
+        <Image
+          source={{ 
+            uri: product.main_picture_url || product.image_url || 'https://images.unsplash.com/photo-1541807084-5c52b6b3adef?w=400&h=300&fit=crop' 
+          }}
+          style={styles.recentProductImg}
+          contentFit="cover"
+        />
+      </View>
+      <View style={styles.recentProductInfo}>
+        <Text style={styles.recentProductName} numberOfLines={2}>
+          {product.title || product.name}
+        </Text>
+        <Text style={styles.recentProductPrice}>
+          ${parseFloat(product.price || 0).toLocaleString()}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+
+  const renderRecentSearch = ({ item: searchTerm }) => (
+    <TouchableOpacity
+      style={styles.recentSearchItem}
+      onPress={() => handleRecentSearchPress(searchTerm)}
+    >
+      <Ionicons name="time-outline" size={16} color="#666" />
+      <Text style={styles.recentSearchText} numberOfLines={1}>
+        {searchTerm}
+      </Text>
+      <Ionicons name="arrow-up-outline" size={16} color="#999" />
     </TouchableOpacity>
   );
 
@@ -204,79 +373,133 @@ export default function SearchScreen({ route, navigation }) {
       )}
       
       {/* Filter Bar */}
-      <View style={styles.filterBar}>
-        <TouchableOpacity
-          style={styles.filterButton}
-          onPress={() => setShowFilters(!showFilters)}
-        >
-          <Ionicons name="filter" size={18} color="#666" />
-          <Text style={styles.filterText}>Filters</Text>
-        </TouchableOpacity>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      {!showRecentData && (
+        <View style={styles.filterBar}>
           <TouchableOpacity
-            style={[
-              styles.sortButton,
-              sortBy === 'price' && sortOrder === 'asc' && styles.activeSortButton
-            ]}
-            onPress={() => applySortFilter('price', 'asc')}
+            style={styles.filterButton}
+            onPress={() => setShowFilters(!showFilters)}
           >
-            <Text style={[
-              styles.sortText,
-              sortBy === 'price' && sortOrder === 'asc' && styles.activeSortText
-            ]}>
-              Price: Low to High
-            </Text>
+            <Ionicons name="filter" size={18} color="#666" />
+            <Text style={styles.filterText}>Filters</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.sortButton,
-              sortBy === 'price' && sortOrder === 'desc' && styles.activeSortButton
-            ]}
-            onPress={() => applySortFilter('price', 'desc')}
-          >
-            <Text style={[
-              styles.sortText,
-              sortBy === 'price' && sortOrder === 'desc' && styles.activeSortText
-            ]}>
-              Price: High to Low
-            </Text>
-          </TouchableOpacity>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sortScrollView}>
+            <TouchableOpacity
+              style={[
+                styles.sortButton,
+                sortBy === 'price' && sortOrder === 'asc' && styles.activeSortButton
+              ]}
+              onPress={() => applySortFilter('price', 'asc')}
+            >
+              <Text style={[
+                styles.sortText,
+                sortBy === 'price' && sortOrder === 'asc' && styles.activeSortText
+              ]}>
+                Price: Low to High
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.sortButton,
-              sortBy === 'sold_count' && sortOrder === 'desc' && styles.activeSortButton
-            ]}
-            onPress={() => applySortFilter('sold_count', 'desc')}
-          >
-            <Text style={[
-              styles.sortText,
-              sortBy === 'sold_count' && sortOrder === 'desc' && styles.activeSortText
-            ]}>
-              Most Popular
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.sortButton,
+                sortBy === 'price' && sortOrder === 'desc' && styles.activeSortButton
+              ]}
+              onPress={() => applySortFilter('price', 'desc')}
+            >
+              <Text style={[
+                styles.sortText,
+                sortBy === 'price' && sortOrder === 'desc' && styles.activeSortText
+              ]}>
+                Price: High to Low
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.sortButton,
-              sortBy === 'modified_at' && sortOrder === 'desc' && styles.activeSortButton
-            ]}
-            onPress={() => applySortFilter('modified_at', 'desc')}
-          >
-            <Text style={[
-              styles.sortText,
-              sortBy === 'modified_at' && sortOrder === 'desc' && styles.activeSortText
-            ]}>
-              Newest
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
+            <TouchableOpacity
+              style={[
+                styles.sortButton,
+                sortBy === 'sold_count' && sortOrder === 'desc' && styles.activeSortButton
+              ]}
+              onPress={() => applySortFilter('sold_count', 'desc')}
+            >
+              <Text style={[
+                styles.sortText,
+                sortBy === 'sold_count' && sortOrder === 'desc' && styles.activeSortText
+              ]}>
+                Most Popular
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.sortButton,
+                sortBy === 'modified_at' && sortOrder === 'desc' && styles.activeSortButton
+              ]}
+              onPress={() => applySortFilter('modified_at', 'desc')}
+            >
+              <Text style={[
+                styles.sortText,
+                sortBy === 'modified_at' && sortOrder === 'desc' && styles.activeSortText
+              ]}>
+                Newest
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      )}
     </View>
   );
+
+  const renderRecentData = () => {
+    if (!showRecentData) return null;
+
+    return (
+      <ScrollView style={styles.recentContainer} showsVerticalScrollIndicator={false}>
+        {/* Recently Searched */}
+        {recentlySearched.length > 0 && (
+          <View style={styles.recentSection}>
+            <View style={styles.recentHeader}>
+              <Text style={styles.recentTitle}>Recently searched</Text>
+              <TouchableOpacity onPress={clearRecentSearches}>
+                <Text style={styles.clearText}>Clear all</Text>
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={recentlySearched}
+              renderItem={renderRecentSearch}
+              keyExtractor={(item, index) => `search_${index}`}
+              scrollEnabled={false}
+            />
+          </View>
+        )}
+
+        {/* Recently Viewed */}
+        {recentlyViewed.length > 0 && (
+          <View style={styles.recentSection}>
+            <Text style={styles.recentTitle}>Recently viewed</Text>
+            <FlatList
+              data={recentlyViewed}
+              renderItem={renderRecentlyViewedProduct}
+              keyExtractor={(item, index) => `viewed_${item.autods_id || item.id || index}`}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentProductsContainer}
+            />
+          </View>
+        )}
+
+        {/* Empty state */}
+        {recentlySearched.length === 0 && recentlyViewed.length === 0 && (
+          <View style={styles.emptyRecentContainer}>
+            <Ionicons name="time-outline" size={64} color="#ccc" />
+            <Text style={styles.emptyRecentTitle}>No recent activity</Text>
+            <Text style={styles.emptyRecentSubtitle}>
+              Search for products or browse our collection to see your activity here
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    );
+  };
 
   const renderFooter = () => {
     if (!loadingMore) return null;
@@ -290,7 +513,7 @@ export default function SearchScreen({ route, navigation }) {
   };
 
   const renderEmpty = () => {
-    if (loading) return null;
+    if (loading || showRecentData) return null;
     
     return (
       <View style={styles.emptyContainer}>
@@ -328,7 +551,7 @@ export default function SearchScreen({ route, navigation }) {
             value={searchQuery}
             onChangeText={handleSearchChange}
             onSubmitEditing={handleSearchSubmit}
-            autoFocus={!initialQuery}
+            autoFocus={!initialQuery && !initialCategory}
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
@@ -339,6 +562,8 @@ export default function SearchScreen({ route, navigation }) {
                 setProducts([]);
                 setShowSuggestions(false);
                 setTotalResults(0);
+                setShowRecentData(true);
+                loadRecentData();
               }}
             >
               <Ionicons name="close" size={20} color="#999" />
@@ -359,8 +584,10 @@ export default function SearchScreen({ route, navigation }) {
         </View>
       )}
 
-      {/* Results */}
-      {loading ? (
+      {/* Content */}
+      {showRecentData ? (
+        renderRecentData()
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#E53E3E" />
           <Text style={styles.loadingText}>Searching...</Text>
@@ -369,7 +596,7 @@ export default function SearchScreen({ route, navigation }) {
         <FlatList
           data={products}
           renderItem={renderProduct}
-          keyExtractor={item => item.autods_id}
+          keyExtractor={item => item.autods_id || item.id || Math.random().toString()}
           numColumns={2}
           columnWrapperStyle={styles.productRow}
           ListHeaderComponent={renderHeader}
@@ -444,6 +671,110 @@ const styles = StyleSheet.create({
     color: '#333',
     flex: 1,
   },
+  recentContainer: {
+    flex: 1,
+    backgroundColor: '#F7F7F7',
+  },
+  recentSection: {
+    backgroundColor: 'white',
+    marginBottom: 8,
+    paddingVertical: 16,
+  },
+  recentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  recentTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  clearText: {
+    color: '#E53E3E',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  recentSearchItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
+  recentSearchText: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+  },
+  recentProductsContainer: {
+    paddingHorizontal: 10,
+  },
+  recentProductCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    width: 140,
+    marginRight: 12,
+    marginLeft: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  recentProductImage: {
+    height: 100,
+    backgroundColor: '#F8F8F8',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    overflow: 'hidden',
+  },
+  recentProductImg: {
+    width: '100%',
+    height: '100%',
+  },
+  recentProductInfo: {
+    padding: 10,
+  },
+  recentProductName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+    lineHeight: 16,
+  },
+  recentProductPrice: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#E53E3E',
+  },
+  emptyRecentContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 64,
+  },
+  emptyRecentTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyRecentSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -486,6 +817,9 @@ const styles = StyleSheet.create({
   filterText: {
     fontSize: 14,
     color: '#666',
+  },
+  sortScrollView: {
+    flex: 1,
   },
   sortButton: {
     paddingHorizontal: 16,

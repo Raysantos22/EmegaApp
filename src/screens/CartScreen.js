@@ -1,4 +1,4 @@
-// src/screens/CartScreen.js
+// src/screens/CartScreen.js - Fixed navigation and product ID issues
 import React, { useState, useCallback } from 'react';
 import {
   View,
@@ -127,20 +127,46 @@ export default function CartScreen({ navigation }) {
   };
 
   const handleContinueShopping = () => {
-    navigation.navigate('HomeTab');
+    // Navigate to HomeTab instead of just Home
+    navigation.navigate('MainTabs', { 
+      screen: 'HomeTab',
+      params: { screen: 'Home' }
+    });
+  };
+
+  const handleProductPress = (item) => {
+    console.log('Cart item pressed:', {
+      autods_id: item.autods_id,
+      product_id: item.product_id,
+      id: item.id,
+      name: item.name
+    });
+
+    // Use the correct product ID - try autods_id first, then product_id, then id
+    const productId = item.autods_id || item.product_id || item.id;
+    
+    if (productId) {
+      navigation.navigate('Product', { 
+        productId: productId,
+        product: item
+      });
+    } else {
+      console.error('No valid product ID found for cart item:', item);
+      Alert.alert('Error', 'Unable to view product details');
+    }
   };
 
   const renderCartItem = ({ item }) => {
     const itemTotal = item.price * item.quantity;
     const primaryImage = item.images && item.images.length > 0 
       ? item.images[0] 
-      : 'https://via.placeholder.com/100x100?text=No+Image';
+      : item.image_url || item.main_picture_url || 'https://via.placeholder.com/100x100?text=No+Image';
 
     return (
       <View style={styles.cartItem}>
         <TouchableOpacity
           style={styles.productInfo}
-          onPress={() => navigation.navigate('Product', { productId: item.product_id })}
+          onPress={() => handleProductPress(item)}
         >
           <Image
             source={{ uri: primaryImage }}
@@ -150,7 +176,7 @@ export default function CartScreen({ navigation }) {
           
           <View style={styles.productDetails}>
             <Text style={styles.productName} numberOfLines={2}>
-              {item.name}
+              {item.name || item.title || item.product_name }
             </Text>
             
             <Text style={styles.productPrice}>
@@ -221,20 +247,30 @@ export default function CartScreen({ navigation }) {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <View style={styles.headerTop}>
-        <Text style={styles.headerTitle}>Shopping Cart</Text>
+      {/* Back button */}
+      <TouchableOpacity 
+        style={styles.backButton}
+        onPress={() => navigation.goBack()}
+      >
+        <Ionicons name="arrow-back" size={24} color="#333" />
+      </TouchableOpacity>
+
+      <View style={styles.headerContent}>
+        <View style={styles.headerTop}>
+          <Text style={styles.headerTitle}>Shopping Cart</Text>
+          {items.length > 0 && (
+            <TouchableOpacity onPress={handleClearCart}>
+              <Text style={styles.clearAllText}>Clear All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        
         {items.length > 0 && (
-          <TouchableOpacity onPress={handleClearCart}>
-            <Text style={styles.clearAllText}>Clear All</Text>
-          </TouchableOpacity>
+          <Text style={styles.itemCount}>
+            {getCartItemsCount()} item{getCartItemsCount() !== 1 ? 's' : ''} in your cart
+          </Text>
         )}
       </View>
-      
-      {items.length > 0 && (
-        <Text style={styles.itemCount}>
-          {getCartItemsCount()} item{getCartItemsCount() !== 1 ? 's' : ''} in your cart
-        </Text>
-      )}
     </View>
   );
 
@@ -367,6 +403,16 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  backButton: {
+    padding: 8,
+    marginRight: 8,
+    marginTop: 4,
+  },
+  headerContent: {
+    flex: 1,
   },
   headerTop: {
     flexDirection: 'row',

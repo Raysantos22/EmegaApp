@@ -1,4 +1,4 @@
-// src/screens/CategoryScreen.js - Updated to use Supabase
+// src/screens/CategoryScreen.js - Fixed with clean navigation like SearchScreen
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -9,26 +9,85 @@ import {
   RefreshControl,
   Alert,
   Dimensions,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
-import { Searchbar, Chip, ActivityIndicator } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { FlatGrid } from 'react-native-super-grid';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 
 import DatabaseService from '../services/DatabaseService';
 import SupabaseProductService from '../services/SupabaseProductService';
-import ProductCard from '../components/ProductCard';
 
 const { width } = Dimensions.get('window');
 
+// Mock categories with images for grid display
+const mockCategories = [
+  { 
+    id: 1, 
+    name: 'Beauty & Grooming', 
+    image: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?w=400&h=300&fit=crop',
+    color: '#FF69B4'
+  },
+  { 
+    id: 2, 
+    name: 'Skincare', 
+    image: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400&h=300&fit=crop',
+    color: '#FFB6C1'
+  },
+  { 
+    id: 3, 
+    name: 'Hair Care', 
+    image: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=400&h=300&fit=crop',
+    color: '#87CEEB'
+  },
+  { 
+    id: 4, 
+    name: 'Electronics', 
+    image: 'https://images.unsplash.com/photo-1498049794561-7780e7231661?w=400&h=300&fit=crop',
+    color: '#4169E1'
+  },
+  { 
+    id: 5, 
+    name: 'Fragrances', 
+    image: 'https://images.unsplash.com/photo-1541643600914-78b084683601?w=400&h=300&fit=crop',
+    color: '#8A2BE2'
+  },
+  { 
+    id: 6, 
+    name: 'Oral Care', 
+    image: 'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=400&h=300&fit=crop',
+    color: '#20B2AA'
+  },
+  { 
+    id: 7, 
+    name: 'Outdoor', 
+    image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop',
+    color: '#228B22'
+  },
+  { 
+    id: 8, 
+    name: 'Accessories', 
+    image: 'https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=400&h=300&fit=crop',
+    color: '#FFD700'
+  },
+  { 
+    id: 9, 
+    name: 'Monitors', 
+    image: 'https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?w=400&h=300&fit=crop',
+    color: '#696969'
+  }
+];
+
 export default function CategoryScreen({ navigation, route }) {
-  const [categories, setCategories] = useState([]);
+  const [categories, setCategories] = useState(mockCategories);
   const [products, setProducts] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
   const [filters, setFilters] = useState({
     sortBy: 'modified_at',
     sortOrder: 'desc',
@@ -37,39 +96,41 @@ export default function CategoryScreen({ navigation, route }) {
   });
 
   // Handle route params
-  const { categoryId, filter } = route.params || {};
+  const { categoryId, filter, category } = route.params || {};
 
   useFocusEffect(
     useCallback(() => {
-      loadCategories();
-      if (categoryId) {
-        setSelectedCategory(categoryId);
-      }
-      if (filter) {
-        loadProductsByFilter(filter);
+      // Reset to category view when navigating back
+      if (!categoryId && !filter && !category) {
+        setShowProducts(false);
+        setSelectedCategory(null);
+        setSearchQuery('');
       } else {
-        loadProducts();
+        if (categoryId) {
+          setSelectedCategory(categoryId);
+          setShowProducts(true);
+          loadProducts();
+        }
+        if (filter) {
+          setShowProducts(true);
+          loadProductsByFilter(filter);
+        }
+        if (category) {
+          setSearchQuery(category);
+          setShowProducts(true);
+          loadProducts();
+        }
       }
-    }, [categoryId, filter])
+    }, [categoryId, filter, category])
   );
-
-  const loadCategories = async () => {
-    try {
-      const categoriesData = await DatabaseService.getCategories();
-      setCategories(categoriesData);
-    } catch (error) {
-      console.error('Error loading categories:', error);
-    }
-  };
 
   const loadProducts = async () => {
     try {
       setLoading(true);
       
-      // Use SupabaseProductService instead of DatabaseService
       const result = await SupabaseProductService.getProducts({
         page: 1,
-        limit: 100, // Load more items for categories
+        limit: 100,
         search: searchQuery.trim() || undefined,
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
@@ -77,10 +138,7 @@ export default function CategoryScreen({ navigation, route }) {
       });
 
       let productsData = result.products || [];
-      
-      // Apply local filters that aren't handled by Supabase
       productsData = applyLocalFilters(productsData);
-      
       setProducts(productsData);
     } catch (error) {
       console.error('Error loading products:', error);
@@ -118,7 +176,6 @@ export default function CategoryScreen({ navigation, route }) {
   const applyLocalFilters = (productsData) => {
     let filtered = [...productsData];
 
-    // Price range filter (only if not 'all')
     if (filters.priceRange !== 'all') {
       filtered = filtered.filter(product => {
         const price = parseFloat(product.price) || 0;
@@ -133,34 +190,49 @@ export default function CategoryScreen({ navigation, route }) {
   };
 
   useEffect(() => {
-    loadProducts();
-  }, [searchQuery, filters]);
+    if (showProducts) {
+      loadProducts();
+    }
+  }, [searchQuery, filters, showProducts]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    SupabaseProductService.clearCache();
-    await DatabaseService.clearCache();
-    await loadCategories();
-    await loadProducts();
+    if (SupabaseProductService.clearCache) {
+      SupabaseProductService.clearCache();
+    }
+    if (showProducts) {
+      await loadProducts();
+    }
     setRefreshing(false);
   };
 
-  const handleCategoryPress = (categoryId) => {
-    setSelectedCategory(selectedCategory === categoryId ? null : categoryId);
-    // Note: For now, category filtering is disabled since Supabase products 
-    // don't have traditional category_id mapping. You can implement tag-based 
-    // filtering here if needed.
+  const handleCategoryPress = (category) => {
+    setSelectedCategory(category.id);
+    setSearchQuery(category.name);
+    setShowProducts(true);
+  };
+
+  const handleBackToCategories = () => {
+    setShowProducts(false);
+    setSelectedCategory(null);
+    setSearchQuery('');
   };
 
   const handleProductPress = (product) => {
     navigation.navigate('Product', { 
-      productId: product.autods_id, // Use autods_id for Supabase products
-      product: product // Pass product data for immediate display
+      productId: product.autods_id,
+      product: product
     });
   };
 
-  const handleSearch = (query) => {
+  const handleSearchChange = (query) => {
     setSearchQuery(query);
+  };
+
+  const handleSearchSubmit = () => {
+    if (searchQuery.trim()) {
+      setShowProducts(true);
+    }
   };
 
   const toggleFilter = (filterType, value) => {
@@ -171,78 +243,37 @@ export default function CategoryScreen({ navigation, route }) {
   };
 
   const getSelectedCategoryName = () => {
-    if (!selectedCategory) return 'All Products';
+    if (!selectedCategory) return 'Products';
     const category = categories.find(c => c.id === selectedCategory);
-    return category ? category.name : 'All Products';
+    return category ? category.name : 'Products';
   };
 
-  const renderHeader = () => (
-    <View style={styles.header}>
-      <View style={styles.headerTop}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        
-        <Text style={styles.headerTitle}>
-          {getSelectedCategoryName()}
-        </Text>
-        
-        <TouchableOpacity style={styles.filterButton}>
-          <Ionicons name="options-outline" size={24} color="#333" />
-        </TouchableOpacity>
-      </View>
-
-      <Searchbar
-        placeholder="Search products..."
-        onChangeText={handleSearch}
-        value={searchQuery}
-        style={styles.searchBar}
-        iconColor="#666"
-      />
-    </View>
-  );
-
-  const renderCategories = () => (
-    <View style={styles.categoriesSection}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoriesContainer}
-      >
-        <Chip
-          selected={!selectedCategory}
-          onPress={() => handleCategoryPress(null)}
+  const renderCategoryGrid = () => (
+    <View style={styles.categoriesGrid}>
+      {categories.map((category, index) => (
+        <TouchableOpacity
+          key={category.id}
           style={[
-            styles.categoryChip,
-            !selectedCategory && styles.selectedCategoryChip
+            styles.categoryCard,
+            index % 2 === 0 ? styles.categoryCardLeft : styles.categoryCardRight
           ]}
-          textStyle={[
-            styles.categoryChipText,
-            !selectedCategory && styles.selectedCategoryChipText
-          ]}
+          onPress={() => handleCategoryPress(category)}
         >
-          All
-        </Chip>
-        
-        {/* For now, show basic category chips. You can implement tag-based filtering later */}
-        {['Technology', 'Monitors', 'Computers', 'Accessories'].map((categoryName, index) => (
-          <Chip
-            key={index}
-            selected={false}
-            onPress={() => {
-              // Implement tag-based search
-              setSearchQuery(categoryName);
-            }}
-            style={styles.categoryChip}
-            textStyle={styles.categoryChipText}
-          >
-            {categoryName}
-          </Chip>
-        ))}
-      </ScrollView>
+          <View style={styles.categoryImageContainer}>
+            <Image
+              source={{ uri: category.image }}
+              style={styles.categoryImage}
+              contentFit="cover"
+            />
+            <View style={[styles.categoryOverlay, { backgroundColor: category.color + '80' }]} />
+          </View>
+          
+          <View style={styles.categoryInfo}>
+            <Text style={styles.categoryName}>{category.name}</Text>
+            <Ionicons name="arrow-forward" size={16} color="#666" />
+          </View>
+        </TouchableOpacity>
+      ))}
     </View>
   );
 
@@ -258,11 +289,14 @@ export default function CategoryScreen({ navigation, route }) {
             styles.filterChip,
             filters.sortBy === 'modified_at' && filters.sortOrder === 'desc' && styles.activeFilterChip
           ]}
-          onPress={() => toggleFilter('sortBy', 'modified_at')}
+          onPress={() => {
+            toggleFilter('sortBy', 'modified_at');
+            toggleFilter('sortOrder', 'desc');
+          }}
         >
           <Text style={[
             styles.filterChipText,
-            filters.sortBy === 'modified_at' && styles.activeFilterChipText
+            filters.sortBy === 'modified_at' && filters.sortOrder === 'desc' && styles.activeFilterChipText
           ]}>
             Newest
           </Text>
@@ -326,7 +360,7 @@ export default function CategoryScreen({ navigation, route }) {
     if (loading) {
       return (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#e53e3e" />
+          <ActivityIndicator size="large" color="#E53E3E" />
           <Text style={styles.loadingText}>Loading products...</Text>
         </View>
       );
@@ -343,19 +377,25 @@ export default function CategoryScreen({ navigation, route }) {
               : 'No products available'
             }
           </Text>
+          <TouchableOpacity 
+            style={styles.backToCategoriesButton}
+            onPress={handleBackToCategories}
+          >
+            <Text style={styles.backToCategoriesText}>Browse Categories</Text>
+          </TouchableOpacity>
         </View>
       );
     }
 
     return (
-      <FlatGrid
-        itemDimension={(width - 48) / 2}
-        data={products}
-        style={styles.productGrid}
-        spacing={12}
-        renderItem={({ item }) => (
+      <View style={styles.productsGrid}>
+        {products.map((item, index) => (
           <TouchableOpacity
-            style={styles.productCard}
+            key={item.autods_id || `product-${index}`}
+            style={[
+              styles.productCard,
+              index % 2 === 0 ? styles.productCardLeft : styles.productCardRight
+            ]}
             onPress={() => handleProductPress(item)}
           >
             <View style={styles.productImageContainer}>
@@ -383,112 +423,202 @@ export default function CategoryScreen({ navigation, route }) {
               </Text>
             </View>
           </TouchableOpacity>
-        )}
-        keyExtractor={(item) => item.autods_id}
-        showsVerticalScrollIndicator={false}
-      />
+        ))}
+      </View>
     );
   };
 
+  const renderHeader = () => (
+    <View style={styles.headerContainer}>
+      {searchQuery && products.length > 0 && (
+        <Text style={styles.resultsText}>
+          {products.length} product{products.length !== 1 ? 's' : ''} found for "{searchQuery}"
+        </Text>
+      )}
+    </View>
+  );
+
   return (
-    <View style={styles.container}>
-      {renderHeader()}
-      
+    <SafeAreaView style={styles.container}>
+      {/* Header - Clean like SearchScreen */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => {
+            if (showProducts) {
+              handleBackToCategories();
+            } else {
+              navigation.goBack();
+            }
+          }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#999" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder={showProducts ? `Search in ${getSelectedCategoryName()}...` : "Search categories..."}
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            onSubmitEditing={handleSearchSubmit}
+            returnKeyType="search"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              style={styles.clearButton}
+              onPress={() => {
+                setSearchQuery('');
+                if (showProducts) {
+                  setShowProducts(false);
+                  setSelectedCategory(null);
+                }
+              }}
+            >
+              <Ionicons name="close" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {showProducts && (
+          <TouchableOpacity 
+            style={styles.gridButton}
+            onPress={handleBackToCategories}
+          >
+            <Ionicons name="grid-outline" size={24} color="#333" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Content */}
       <ScrollView
         style={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        stickyHeaderIndices={[0, 1]}
       >
-        {renderCategories()}
-        {renderFilters()}
-        
-        <View style={styles.resultsHeader}>
-          <Text style={styles.resultsText}>
-            {products.length} product{products.length !== 1 ? 's' : ''} found
-          </Text>
-        </View>
-        
-        {renderProducts()}
-        
+        {showProducts && renderFilters()}
+        {showProducts && renderHeader()}
+        {showProducts ? renderProducts() : renderCategoryGrid()}
         <View style={styles.bottomSpacing} />
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#F7F7F7',
   },
   header: {
-    backgroundColor: 'white',
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  headerTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'white',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
   },
   backButton: {
-    padding: 8,
-    marginRight: 8,
+    padding: 4,
+    marginRight: 12,
   },
-  headerTitle: {
+  searchContainer: {
     flex: 1,
-    fontSize: 20,
-    fontWeight: 'bold',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
     color: '#333',
-    textAlign: 'center',
   },
-  filterButton: {
-    padding: 8,
-    marginLeft: 8,
+  clearButton: {
+    padding: 4,
   },
-  searchBar: {
-    backgroundColor: '#f5f5f5',
-    elevation: 0,
-    borderRadius: 25,
+  gridButton: {
+    padding: 4,
+    marginLeft: 12,
   },
   content: {
     flex: 1,
   },
-  categoriesSection: {
+  headerContainer: {
     backgroundColor: 'white',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  categoriesContainer: {
     paddingHorizontal: 16,
-    gap: 8,
+    paddingVertical: 12,
+    marginBottom: 8,
   },
-  categoryChip: {
-    backgroundColor: '#f5f5f5',
-    borderWidth: 0,
-  },
-  selectedCategoryChip: {
-    backgroundColor: '#e53e3e',
-  },
-  categoryChipText: {
-    color: '#666',
+  resultsText: {
     fontSize: 14,
+    color: '#666',
   },
-  selectedCategoryChipText: {
-    color: 'white',
+  categoriesGrid: {
+    padding: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  categoryCard: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  categoryCardLeft: {
+    width: (width - 44) / 2,
+    marginRight: 6,
+  },
+  categoryCardRight: {
+    width: (width - 44) / 2,
+    marginLeft: 6,
+  },
+  categoryImageContainer: {
+    height: 100,
+    position: 'relative',
+  },
+  categoryImage: {
+    width: '100%',
+    height: '100%',
+  },
+  categoryOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  categoryInfo: {
+    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  categoryName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
   },
   filtersSection: {
     backgroundColor: 'white',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: '#E0E0E0',
   },
   filtersContainer: {
     paddingHorizontal: 16,
@@ -498,13 +628,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F0F0F0',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#E0E0E0',
   },
   activeFilterChip: {
-    backgroundColor: '#e53e3e',
-    borderColor: '#e53e3e',
+    backgroundColor: '#E53E3E',
+    borderColor: '#E53E3E',
   },
   filterChipText: {
     fontSize: 12,
@@ -514,33 +644,32 @@ const styles = StyleSheet.create({
   activeFilterChipText: {
     color: 'white',
   },
-  resultsHeader: {
-    backgroundColor: 'white',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  resultsText: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '500',
-  },
-  productGrid: {
+  productsGrid: {
     padding: 16,
-    backgroundColor: '#fafafa',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
   },
   productCard: {
     backgroundColor: 'white',
     borderRadius: 12,
+    marginBottom: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
+  productCardLeft: {
+    width: (width - 44) / 2,
+    marginRight: 6,
+  },
+  productCardRight: {
+    width: (width - 44) / 2,
+    marginLeft: 6,
+  },
   productImageContainer: {
-    height: 140,
+    height: 340,
     backgroundColor: '#F8F8F8',
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
@@ -606,6 +735,18 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     lineHeight: 20,
+    marginBottom: 24,
+  },
+  backToCategoriesButton: {
+    backgroundColor: '#E53E3E',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  backToCategoriesText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
   bottomSpacing: {
     height: 80,
