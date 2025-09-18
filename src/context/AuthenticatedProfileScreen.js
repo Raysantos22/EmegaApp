@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from './AuthContext';
 
 export default function AuthenticatedProfileScreen({ navigation }) {
   const { user, userProfile, loading, signOut, fetchUserProfile } = useAuth();

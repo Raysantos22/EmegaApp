@@ -1,4 +1,4 @@
-// App.js - Fixed navigation structure to hide bottom tabs on cart screen
+// App.js - Updated with real notification service integration
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -20,9 +20,12 @@ import LoginScreen from './src/screens/LoginScreen';
 
 // Services
 import DatabaseService from './src/services/DatabaseService';
+import NotificationService from './src/services/NotificationService';
+
+// Context
 import { CartProvider } from './src/context/CartContext';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
-import { NotificationProvider } from './src/context/NotificationContext';
+import { NotificationProvider, useNotifications } from './src/context/NotificationContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -112,6 +115,91 @@ function TabNavigator() {
   );
 }
 
+// Main app content wrapper to initialize notifications when user is available
+function MainAppContent() {
+  const { user } = useAuth();
+  const { initializeNotifications, initialized, checkPendingAction } = useNotifications();
+  const [notificationInitialized, setNotificationInitialized] = useState(false);
+
+  useEffect(() => {
+    const initNotifications = async () => {
+      if (user && !notificationInitialized) {
+        try {
+          console.log('Initializing notifications for user:', user.id || user.email);
+          
+          // Get user ID from your auth system - adapt this to your auth structure
+          const userId = user.id || user.email || 'guest';
+          
+          await initializeNotifications(userId);
+          setNotificationInitialized(true);
+          
+          // Check if app was opened from a notification
+          const pendingAction = checkPendingAction();
+          if (pendingAction) {
+            console.log('App opened from notification:', pendingAction);
+            // Handle the pending action if needed
+          }
+          
+        } catch (error) {
+          console.error('Failed to initialize notifications:', error);
+        }
+      }
+    };
+
+    initNotifications();
+
+    // Cleanup when user changes or component unmounts
+    return () => {
+      if (notificationInitialized) {
+        NotificationService.cleanup();
+        setNotificationInitialized(false);
+      }
+    };
+  }, [user, initializeNotifications, notificationInitialized, checkPendingAction]);
+
+  // Handle notification actions globally
+  useEffect(() => {
+    if (!initialized) return;
+
+    const handleNotificationAction = (actionData) => {
+      console.log('Global notification action handler:', actionData);
+      // You can add global navigation logic here
+      // For example, navigate to specific screens based on action type
+    };
+
+    NotificationService.setNotificationCallback('action', handleNotificationAction);
+
+    return () => {
+      NotificationService.removeNotificationCallback('action', handleNotificationAction);
+    };
+  }, [initialized]);
+
+  return (
+    <Stack.Navigator 
+      screenOptions={{ 
+        headerShown: false,
+        presentation: 'card'
+      }}
+    >
+      <Stack.Screen name="MainTabs" component={TabNavigator} />
+      <Stack.Screen 
+        name="Product" 
+        component={ProductDetailsScreen}
+        options={{
+          presentation: 'card',
+        }}
+      />
+      <Stack.Screen 
+        name="Cart" 
+        component={CartScreen}
+        options={{
+          presentation: 'card',
+        }}
+      />
+    </Stack.Navigator>
+  );
+}
+
 // Main stack navigator that contains both auth and main app
 function AppNavigator() {
   const { user, loading, initialized } = useAuth();
@@ -145,24 +233,8 @@ function AppNavigator() {
       }}
     >
       {user ? (
-        // User is signed in - show main app
-        <>
-          <Stack.Screen name="MainTabs" component={TabNavigator} />
-          <Stack.Screen 
-            name="Product" 
-            component={ProductDetailsScreen}
-            options={{
-              presentation: 'card',
-            }}
-          />
-          <Stack.Screen 
-            name="Cart" 
-            component={CartScreen}
-            options={{
-              presentation: 'card',
-            }}
-          />
-        </>
+        // User is signed in - show main app with notifications
+        <Stack.Screen name="MainApp" component={MainAppContent} />
       ) : (
         // User is not signed in - show login
         <Stack.Screen name="Login" component={LoginScreen} />

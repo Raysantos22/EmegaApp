@@ -29,14 +29,14 @@ const AnimatedBannerCarousel = ({
   const intervalRef = useRef(null);
 
   useEffect(() => {
-    console.log('Banner component mounted with:', {
-      bannerCount: banners.length,
-      autoSlide,
-      currentIndex
-    });
+    // console.log('Banner component mounted with:', {
+    //   bannerCount: banners.length,
+    //   autoSlide,
+    //   currentIndex
+    // });
     
     if (autoSlide && banners.length > 1) {
-      console.log('Starting auto-slide with interval:', slideInterval);
+      // console.log('Starting auto-slide with interval:', slideInterval);
       startAutoSlide();
     } else {
       console.log('Auto-slide not started:', { autoSlide, bannerCount: banners.length });
@@ -45,7 +45,7 @@ const AnimatedBannerCarousel = ({
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
-        console.log('Cleared auto-slide interval');
+        // console.log('Cleared auto-slide interval');
       }
     };
   }, [autoSlide, banners.length, currentIndex]);
@@ -68,7 +68,7 @@ const AnimatedBannerCarousel = ({
 
   const goToNext = () => {
     const nextIndex = (currentIndex + 1) % banners.length;
-    console.log('Going to next slide:', { currentIndex, nextIndex });
+    // console.log('Going to next slide:', { currentIndex, nextIndex });
     goToSlide(nextIndex);
   };
 

@@ -309,58 +309,6 @@ class SupabaseBannerService {
     }
   }
 
-  // Fallback banners if Supabase is unavailable
-  // getFallbackBanners() {
-  //   console.log('Using fallback banners');
-  //   return [
-  //     {
-  //       id: 1,
-  //       title: "Flash Sale",
-  //       subtitle: "Up to 70% OFF",
-  //       image: "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?w=800&h=400&fit=crop",
-  //       text_color: "white",
-  //       action_type: "category",
-  //       action_value: "electronics",
-  //       display_order: 1,
-  //       is_active: true
-  //     },
-  //     {
-  //       id: 2,
-  //       title: "New Arrivals",
-  //       subtitle: "Discover Latest Fashion",
-  //       image: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800&h=400&fit=crop",
-  //       text_color: "white",
-  //       action_type: "category",
-  //       action_value: "fashion",
-  //       display_order: 2,
-  //       is_active: true
-  //     },
-  //     {
-  //       id: 3,
-  //       title: "Best Deals",
-  //       subtitle: "Limited Time Offer",
-  //       image: "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=800&h=400&fit=crop",
-  //       text_color: "white",
-  //       action_type: "category",
-  //       action_value: "home",
-  //       display_order: 3,
-  //       is_active: true
-  //     },
-  //     {
-  //       id: 4,
-  //       title: "Weekend Special",
-  //       subtitle: "Free Shipping on All Orders",
-  //       image: "https://images.unsplash.com/photo-1472851294608-062f824d29cc?w=800&h=400&fit=crop",
-  //       text_color: "white",
-  //       action_type: "category",
-  //       action_value: "special",
-  //       display_order: 4,
-  //       is_active: true
-  //     }
-  //   ];
-  // }
-
-  // Search banners by title or action_value
   async searchBanners(query, limit = 10) {
     if (!query.trim()) return [];
 

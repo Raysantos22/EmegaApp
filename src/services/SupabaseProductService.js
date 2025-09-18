@@ -165,7 +165,7 @@ class SupabaseProductService {
         throw error;
       }
 
-      console.log(`Raw featured products data:`, data);
+      // console.log(`Raw featured products data:`, data);
 
       const products = (data || []).map(product => ({
         ...product,

@@ -657,7 +657,8 @@ export default function HomeScreen({ navigation }) {
             <FlatList
               data={gridBanners}
               renderItem={renderGridBanner}
-              keyExtractor={(item, index) => `grid-${item.id || item.autods_id || index}-${item.display_order || index}`}
+              // Replace this in your FlatList components
+              keyExtractor={(item, index) => `${item.autods_id || item.id || index}-${Date.now()}`}
               numColumns={2}
               scrollEnabled={false}
               showsVerticalScrollIndicator={false}
